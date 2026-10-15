@@ -1,0 +1,13 @@
+{
+  "name": "计划鲸灵",
+  "short_name": "鲸灵",
+  "description": "可爱的计划与习惯打卡小助手",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EEF2FF",
+  "theme_color": "#6C8BFF",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
