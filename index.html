@@ -21,6 +21,7 @@
           <p id="today-line">今天也要加油哦</p>
         </div>
       </div>
+      <button class="sync-btn" id="sync-btn" title="同步">☁️</button>
     </header>
 
     <!-- 分类筛选 -->
@@ -91,6 +92,17 @@
         <button class="btn ghost" id="sheet-cancel">取消</button>
         <button class="btn primary" id="sheet-save">保存</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 同步设置 弹窗 -->
+  <div class="overlay" id="sync-overlay" hidden>
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>同步设置</h2>
+        <button class="icon-btn" id="sync-close">✕</button>
+      </div>
+      <div id="sync-body"></div>
     </div>
   </div>
 
