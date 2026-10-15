@@ -35,6 +35,7 @@ let syncToken = localStorage.getItem(LS_TOKEN) || null;
 let remoteSha = null;
 let syncState = syncToken ? 'pending' : 'off'; // off | pending | synced | error
 let pushTimer = null;
+let syncError = '';
 
 // ---------- 基础工具 ----------
 function load(key, fallback) {
@@ -152,10 +153,10 @@ async function syncFromRemote() {
       remoteSha = null;   // 云端还是空的 → 把本地推上去
       await pushToRemote();
     } else {
-      setSyncState('error');
+      setSyncState('error', statusMsg(r.status));
     }
   } catch (e) {
-    setSyncState('error');
+    setSyncState('error', '连不上 GitHub(网络或代理问题)');
   }
 }
 async function pushToRemote() {
@@ -179,15 +180,19 @@ async function pushToRemote() {
         const j = await r.json();
         remoteSha = j.content.sha;
         setSyncState('synced');
-      } else setSyncState('error');
+      } else setSyncState('error', '同步冲突,稍后重试');
     } else {
-      setSyncState('error');
+      setSyncState('error', statusMsg(r.status));
     }
   } catch (e) {
-    setSyncState('error');
+    setSyncState('error', '连不上 GitHub(网络或代理问题)');
   }
 }
-function setSyncState(s) { syncState = s; updateSyncBtn(); }
+function statusMsg(s) {
+  if (s === 401 || s === 403) return '令牌无效:检查有没有复制正确(ghp 后面是下划线 _ ,不是空格)';
+  return '同步失败(HTTP ' + s + ')';
+}
+function setSyncState(s, msg) { syncState = s; if (msg !== undefined) syncError = msg; updateSyncBtn(); }
 function updateSyncBtn() {
   const btn = document.getElementById('sync-btn');
   if (!btn) return;
@@ -217,6 +222,7 @@ function renderSyncBody() {
     el.innerHTML = `
       <p class="sync-desc">已连接云端同步。打开 App 会自动拉取最新数据,改动会自动上传。</p>
       <p class="sync-status ${syncState}">状态:${st}</p>
+      ${syncError ? `<p class="sync-desc" style="color:#FF7A93">${esc(syncError)}</p>` : ''}
       <div class="sheet-actions">
         <button class="btn primary" id="sync-now">立即同步</button>
         <button class="btn ghost" id="sync-disconnect">断开同步</button>
