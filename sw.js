@@ -1,4 +1,4 @@
-const CACHE = 'jql-v1';
+const CACHE = 'jql-v3';
 const ASSETS = ['./', './index.html', './style.css', './app.js', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', (e) => {
@@ -16,6 +16,8 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
+  const url = new URL(e.request.url);
+  if (url.origin !== self.location.origin) return;  // 跨域(如 GitHub API)不拦截、不缓存
   if (e.request.method !== 'GET') return;
   e.respondWith(
     caches.match(e.request).then((hit) => {
