@@ -1,8 +1,15 @@
-// ===== 计划鲸灵 · 核心逻辑 =====
+// ===== 计划鲸灵 · 核心逻辑(含云端同步)=====
 'use strict';
 
 const LS_PLANS = 'jql_plans_v1';
 const LS_PROGRESS = 'jql_progress_v1';
+const LS_TOKEN = 'jql_token';
+
+// 云端同步(GitHub 私有仓库)
+const GH_OWNER = 'FuGuang315';
+const GH_REPO = 'plan-jingling-data';
+const GH_FILE = 'data.json';
+const GH_API = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_FILE}`;
 
 const CATS = ['学习', '工作', '生活', '健身', '其他'];
 const CAT_COLORS = {
@@ -23,6 +30,12 @@ let draftCat = '学习';
 let draftPeriod = 'daily';
 let draftSubs = [];
 
+// 同步状态
+let syncToken = localStorage.getItem(LS_TOKEN) || null;
+let remoteSha = null;
+let syncState = syncToken ? 'pending' : 'off'; // off | pending | synced | error
+let pushTimer = null;
+
 // ---------- 基础工具 ----------
 function load(key, fallback) {
   try { const v = JSON.parse(localStorage.getItem(key)); return v == null ? fallback : v; }
@@ -32,6 +45,7 @@ function save() {
   localStorage.setItem(LS_PLANS, JSON.stringify(plans));
   localStorage.setItem(LS_PROGRESS, JSON.stringify(progress));
 }
+function commit() { save(); schedulePush(); }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -56,6 +70,17 @@ function periodKey(plan, d = new Date()) {
     case 'monthly': return dateStr(d).slice(0, 7);
     default: return 'once';
   }
+}
+function b64encode(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+function b64decode(b64) {
+  const bin = atob(b64.replace(/\s/g, ''));
+  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
 }
 
 // ---------- 状态读取 ----------
@@ -88,9 +113,134 @@ function isDayDone(plan, d) {
 function streakOf(plan) {
   let n = 0;
   const d = new Date();
-  if (!isDayDone(plan, d)) d.setDate(d.getDate() - 1); // 今天没完成就从昨天开始数
+  if (!isDayDone(plan, d)) d.setDate(d.getDate() - 1);
   while (isDayDone(plan, d)) { n++; d.setDate(d.getDate() - 1); }
   return n;
+}
+
+// ---------- 云端同步 ----------
+function ghFetch(url, opts = {}) {
+  return fetch(url, {
+    ...opts,
+    headers: {
+      'Authorization': 'Bearer ' + syncToken,
+      'Accept': 'application/vnd.github+json',
+      ...(opts.headers || {})
+    }
+  });
+}
+function schedulePush() {
+  if (!syncToken) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushToRemote, 800);
+}
+async function syncFromRemote() {
+  if (!syncToken) return;
+  setSyncState('pending');
+  try {
+    const r = await ghFetch(GH_API);
+    if (r.status === 200) {
+      const j = await r.json();
+      remoteSha = j.sha;
+      const data = JSON.parse(b64decode(j.content));
+      plans = data.plans || [];
+      progress = data.progress || {};
+      save();           // 存本地缓存(不触发上传)
+      setSyncState('synced');
+      render();
+    } else if (r.status === 404) {
+      remoteSha = null;   // 云端还是空的 → 把本地推上去
+      await pushToRemote();
+    } else {
+      setSyncState('error');
+    }
+  } catch (e) {
+    setSyncState('error');
+  }
+}
+async function pushToRemote() {
+  if (!syncToken) return;
+  const payload = b64encode(JSON.stringify({ plans, progress }));
+  try {
+    let body = { message: 'sync ' + new Date().toISOString(), content: payload };
+    if (remoteSha) body.sha = remoteSha;
+    let r = await ghFetch(GH_API, { method: 'PUT', body: JSON.stringify(body) });
+    if (r.status === 201 || r.status === 200) {
+      const j = await r.json();
+      remoteSha = j.content.sha;
+      setSyncState('synced');
+    } else if (r.status === 409) {
+      // 冲突:先拿最新 sha,再以本地为准覆盖
+      const g = await ghFetch(GH_API);
+      if (g.status === 200) remoteSha = (await g.json()).sha;
+      body.sha = remoteSha;
+      r = await ghFetch(GH_API, { method: 'PUT', body: JSON.stringify(body) });
+      if (r.status === 201 || r.status === 200) {
+        const j = await r.json();
+        remoteSha = j.content.sha;
+        setSyncState('synced');
+      } else setSyncState('error');
+    } else {
+      setSyncState('error');
+    }
+  } catch (e) {
+    setSyncState('error');
+  }
+}
+function setSyncState(s) { syncState = s; updateSyncBtn(); }
+function updateSyncBtn() {
+  const btn = document.getElementById('sync-btn');
+  if (!btn) return;
+  btn.classList.remove('synced', 'error');
+  if (syncState === 'synced') btn.classList.add('synced');
+  else if (syncState === 'error') btn.classList.add('error');
+}
+
+// ---------- 同步弹窗 ----------
+function openSync() {
+  renderSyncBody();
+  document.getElementById('sync-overlay').hidden = false;
+}
+function renderSyncBody() {
+  const el = document.getElementById('sync-body');
+  if (!syncToken) {
+    el.innerHTML = `
+      <p class="sync-desc">把数据存到云端,手机和电脑就能互通。<br>粘贴一个 GitHub 令牌即可(只存在你本机浏览器里)。</p>
+      <label class="field"><span>GitHub 令牌</span>
+        <input id="sync-token-input" type="password" placeholder="ghp_..." autocomplete="off"/>
+      </label>
+      <div class="sheet-actions"><button class="btn primary" id="sync-connect">连接同步</button></div>`;
+    document.getElementById('sync-connect').onclick = connectSync;
+  } else {
+    const map = { pending: '同步中…', synced: '已同步 ✓', error: '同步失败(可能离线)' };
+    const st = map[syncState] || '未同步';
+    el.innerHTML = `
+      <p class="sync-desc">已连接云端同步。打开 App 会自动拉取最新数据,改动会自动上传。</p>
+      <p class="sync-status ${syncState}">状态:${st}</p>
+      <div class="sheet-actions">
+        <button class="btn primary" id="sync-now">立即同步</button>
+        <button class="btn ghost" id="sync-disconnect">断开同步</button>
+      </div>`;
+    document.getElementById('sync-now').onclick = pushToRemote;
+    document.getElementById('sync-disconnect').onclick = disconnectSync;
+  }
+}
+function connectSync() {
+  const v = document.getElementById('sync-token-input').value.trim();
+  if (!v) { alert('请粘贴令牌'); return; }
+  syncToken = v;
+  localStorage.setItem(LS_TOKEN, v);
+  remoteSha = null;
+  syncFromRemote();
+}
+function disconnectSync() {
+  if (!confirm('断开同步?本地数据会保留,只是不再上传云端。')) return;
+  syncToken = null;
+  remoteSha = null;
+  clearTimeout(pushTimer);
+  localStorage.removeItem(LS_TOKEN);
+  setSyncState('off');
+  renderSyncBody();
 }
 
 // ---------- 渲染 ----------
@@ -186,7 +336,7 @@ function cardHTML(plan) {
   return html + '</div>';
 }
 
-// ---------- 事件：内容区 ----------
+// ---------- 事件:内容区 ----------
 const content = document.getElementById('content');
 content.addEventListener('change', (e) => {
   const t = e.target;
@@ -194,8 +344,8 @@ content.addEventListener('change', (e) => {
   const plan = plans.find(p => p.id === t.dataset.id); if (!plan) return;
   const st = curState(plan);
   st.checked[+t.dataset.i] = t.checked;
-  st.manual = null;          // 勾子任务后回到自动计算
-  save();
+  st.manual = null;
+  commit();
   renderContent();
 });
 content.addEventListener('input', (e) => {
@@ -204,7 +354,7 @@ content.addEventListener('input', (e) => {
   const plan = plans.find(p => p.id === t.dataset.id); if (!plan) return;
   const st = curState(plan);
   st.manual = +t.value;
-  save();
+  commit();
   const card = t.closest('.card');
   card.querySelector('.pct').textContent = t.value + '%';
   card.querySelector('.bar i').style.width = t.value + '%';
@@ -220,18 +370,18 @@ content.addEventListener('click', (e) => {
     const st = curState(plan);
     if (st.doneAt) { st.doneAt = null; st.manual = null; }
     else { st.doneAt = new Date().toISOString(); st.manual = null; }
-    save(); renderContent();
+    commit(); renderContent();
   } else if (action === 'done') {
     const st = curState(plan);
     st.manual = (shown(plan, st) >= 100) ? 0 : 100;
-    save(); renderContent();
+    commit(); renderContent();
   } else if (action === 'edit') {
     openSheet(id);
   } else if (action === 'del') {
     if (confirm('删除「' + plan.title + '」?')) {
       plans = plans.filter(p => p.id !== id);
       delete progress[id];
-      save(); render();
+      commit(); render();
     }
   }
 });
@@ -249,7 +399,7 @@ document.getElementById('cat-chips').addEventListener('click', (e) => {
   render();
 });
 
-// ---------- 弹窗 ----------
+// ---------- 计划弹窗 ----------
 const overlay = document.getElementById('overlay');
 document.getElementById('fab').addEventListener('click', () => openSheet(null));
 document.getElementById('sheet-close').addEventListener('click', closeSheet);
@@ -323,7 +473,7 @@ function saveSheet() {
   } else {
     plans.push({ id: uid(), title, category: draftCat, period: draftPeriod, note, due, subtasks, createdAt: Date.now() });
   }
-  save(); render(); closeSheet();
+  commit(); render(); closeSheet();
 }
 function reconcile(plan) {
   const stAll = progress[plan.id]; if (!stAll) return;
@@ -334,6 +484,13 @@ function reconcile(plan) {
     if (arr.length > n) arr.length = n;
   }
 }
+
+// ---------- 同步按钮 / 弹窗事件 ----------
+document.getElementById('sync-btn').addEventListener('click', openSync);
+document.getElementById('sync-close').addEventListener('click', () => { document.getElementById('sync-overlay').hidden = true; });
+document.getElementById('sync-overlay').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('sync-overlay')) document.getElementById('sync-overlay').hidden = true;
+});
 
 // ---------- 问候语 / 启动 ----------
 function greet() {
@@ -349,3 +506,5 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 }
 document.getElementById('today-line').textContent = greet();
 render();
+updateSyncBtn();
+if (syncToken) syncFromRemote();
