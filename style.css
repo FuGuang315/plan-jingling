@@ -47,11 +47,13 @@ body {
 /* 同步按钮 + 弹窗 */
 .sync-btn {
   border: 0; cursor: pointer; background: var(--card);
-  width: 44px; height: 44px; border-radius: 14px;
+  height: 44px; border-radius: 14px;
   font-size: 22px; box-shadow: var(--shadow);
-  display: grid; place-items: center;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 14px;
   color: var(--ink-soft);
 }
+.sync-btn span { font-size: 13px; font-weight: 600; }
 .sync-btn.synced { color: var(--blue); }
 .sync-btn.error { color: #FF7A93; }
 .sync-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.7; margin: 4px 0 14px; }
