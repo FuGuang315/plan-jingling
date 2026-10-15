@@ -212,7 +212,7 @@ function renderSyncBody() {
     el.innerHTML = `
       <p class="sync-desc">把数据存到云端,手机和电脑就能互通。<br>粘贴一个 GitHub 令牌即可(只存在你本机浏览器里)。</p>
       <label class="field"><span>GitHub 令牌</span>
-        <input id="sync-token-input" type="password" placeholder="ghp_..." autocomplete="off"/>
+        <input id="sync-token-input" type="text" placeholder="ghp_..." autocomplete="off" inputmode="text"/>
       </label>
       <div class="sheet-actions"><button class="btn primary" id="sync-connect">连接同步</button></div>`;
     document.getElementById('sync-connect').onclick = connectSync;
