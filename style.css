@@ -31,7 +31,7 @@ body {
 }
 
 /* ---------- 顶部 ---------- */
-.header { padding: 20px 4px 12px; }
+.header { padding: 20px 4px 12px; display: flex; align-items: center; justify-content: space-between; }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand-icon {
   width: 48px; height: 48px;
@@ -43,6 +43,21 @@ body {
 }
 .brand h1 { margin: 0; font-size: 20px; letter-spacing: .5px; }
 .brand p { margin: 2px 0 0; font-size: 12px; color: var(--ink-soft); }
+
+/* 同步按钮 + 弹窗 */
+.sync-btn {
+  border: 0; cursor: pointer; background: var(--card);
+  width: 44px; height: 44px; border-radius: 14px;
+  font-size: 22px; box-shadow: var(--shadow);
+  display: grid; place-items: center;
+  color: var(--ink-soft);
+}
+.sync-btn.synced { color: var(--blue); }
+.sync-btn.error { color: #FF7A93; }
+.sync-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.7; margin: 4px 0 14px; }
+.sync-status { font-size: 14px; font-weight: 600; padding: 11px 13px; border-radius: 12px; background: var(--bg1); color: var(--ink); margin-bottom: 4px; }
+.sync-status.synced { color: var(--blue-deep); }
+.sync-status.error { color: #FF7A93; }
 
 /* ---------- 分类筛选 ---------- */
 .chips { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 12px; scrollbar-width: none; }
