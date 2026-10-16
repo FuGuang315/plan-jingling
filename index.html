@@ -15,7 +15,7 @@
     <!-- 顶部 -->
     <header class="header">
       <div class="brand">
-        <span class="brand-icon">🐋</span>
+        <button class="brand-icon" id="whale-btn" title="更多">🐋</button>
         <div>
           <h1>计划鲸灵</h1>
           <p id="today-line">今天也要加油哦</p>
@@ -36,7 +36,6 @@
       <button class="tab" data-tab="week"><span>🗓️</span>周</button>
       <button class="tab" data-tab="month"><span>📆</span>月</button>
       <button class="tab" data-tab="all"><span>📋</span>全部</button>
-      <button class="tab" data-tab="done"><span>✅</span>已完成</button>
     </nav>
 
     <!-- 添加按钮 -->
@@ -75,6 +74,15 @@
         <span>截止日期</span>
         <input id="f-due" type="date" />
       </label>
+
+      <div class="field" id="f-range-wrap" hidden>
+        <span>日期范围（可选，循环任务用）</span>
+        <div class="range-row">
+          <input id="f-start" type="date" />
+          <span>至</span>
+          <input id="f-end" type="date" />
+        </div>
+      </div>
 
       <label class="field">
         <span>备注（可选）</span>
@@ -120,6 +128,23 @@
         <button class="btn ghost" id="dialog-cancel">取消</button>
         <button class="btn primary" id="dialog-ok">确定</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 鲸鱼菜单 -->
+  <div class="overlay" id="whale-overlay" hidden>
+    <div class="sheet">
+      <div class="sheet-head"><h2>更多</h2><button class="icon-btn" id="whale-close">✕</button></div>
+      <button class="menu-item" id="menu-done"><span>✅</span>已完成</button>
+      <!-- 以后新功能加这里 -->
+    </div>
+  </div>
+
+  <!-- 已完成 -->
+  <div class="overlay" id="done-overlay" hidden>
+    <div class="sheet">
+      <div class="sheet-head"><h2>已完成</h2><button class="icon-btn" id="done-close">✕</button></div>
+      <div id="done-body"></div>
     </div>
   </div>
 
