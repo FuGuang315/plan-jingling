@@ -32,6 +32,7 @@ let activeCat = '全部';
 let editingId = null;
 let draftCat = '学习';
 let draftPeriod = 'daily';
+let draftOnceType = 'deadline';
 let draftSubs = [];
 
 // 同步状态
@@ -75,6 +76,21 @@ function periodKey(plan, d = new Date()) {
     case 'monthly': return dateStr(d).slice(0, 7);
     default: return 'once';
   }
+}
+function daysUntil(ds) {
+  if (!ds) return null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const due = new Date(ds + 'T00:00:00');
+  return Math.round((due - today) / 86400000);
+}
+function countdownText(plan) {
+  const d = daysUntil(plan.due);
+  if (d == null) return '';
+  const ev = plan.onceType === 'event';
+  if (d === 0) return ev ? '今天' : '今天截止';
+  if (d === 1) return ev ? '明天' : '明天截止';
+  if (d > 1) return ev ? `还有 ${d} 天` : `还有 ${d} 天截止`;
+  return ev ? `已过 ${-d} 天` : `已截止 ${-d} 天`;
 }
 function b64encode(str) {
   const bytes = new TextEncoder().encode(str);
@@ -485,7 +501,11 @@ function cardHTML(plan) {
       <span class="imp" style="color:${impColor}">★${imp}</span>
       <span class="badge">${PERIOD_LABEL[plan.period]}</span>
     </div>`;
-  if (plan.period === 'once' && plan.due) html += `<p class="card-note">⏰ 截止 ${esc(plan.due)}</p>`;
+  if (plan.period === 'once' && plan.due) {
+    const cd = countdownText(plan);
+    const ic = plan.onceType === 'event' ? '📌' : '⏰';
+    html += `<p class="card-note">${ic} ${cd}（${esc(plan.due)}）</p>`;
+  }
   if (plan.endDate) html += `<p class="card-note">📅 截止 ${esc(plan.endDate)}</p>`;
   if (plan.note) html += `<p class="card-note">${esc(plan.note)}</p>`;
 
@@ -617,6 +637,7 @@ function openSheet(id) {
   document.getElementById('f-end').value = (plan && plan.endDate) ? plan.endDate : '';
   draftCat = plan ? plan.category : '学习';
   draftPeriod = plan ? plan.period : 'daily';
+  draftOnceType = plan ? (plan.onceType || 'deadline') : 'deadline';
   draftSubs = plan ? plan.subtasks.map(s => s.text) : [];
   renderCatSeg(); renderPeriodSeg(); renderSubDraft();
   overlay.hidden = false;
@@ -634,6 +655,9 @@ function renderPeriodSeg() {
   document.getElementById('f-cycle-wrap').hidden = draftPeriod === 'once';
   document.querySelectorAll('#f-cycle button').forEach(b => b.classList.toggle('active', b.dataset.cycle === draftPeriod));
   document.getElementById('f-due-wrap').hidden = draftPeriod !== 'once';
+  document.getElementById('f-oncetype-wrap').hidden = draftPeriod !== 'once';
+  document.querySelectorAll('#f-oncetype button').forEach(b => b.classList.toggle('active', b.dataset.oncetype === draftOnceType));
+  document.getElementById('f-due-label').textContent = draftOnceType === 'event' ? '日期' : '截止日期';
   document.getElementById('f-range-wrap').hidden = draftPeriod === 'once';
 }
 function renderSubDraft() {
@@ -653,6 +677,10 @@ document.getElementById('f-type').addEventListener('click', (e) => {
 document.getElementById('f-cycle').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   draftPeriod = b.dataset.cycle; renderPeriodSeg();
+});
+document.getElementById('f-oncetype').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  draftOnceType = b.dataset.oncetype; renderPeriodSeg();
 });
 document.getElementById('f-sub-list').addEventListener('input', (e) => {
   const t = e.target;
@@ -674,6 +702,7 @@ function saveSheet() {
   if (!title) { alert('标题不能为空哦'); return; }
   const note = document.getElementById('f-note').value.trim();
   const due = (draftPeriod === 'once') ? (document.getElementById('f-due').value || null) : null;
+  const onceType = (draftPeriod === 'once') ? draftOnceType : null;
   const importance = Math.max(1, Math.min(10, +document.getElementById('f-imp').value || 5));
   const startDate = (draftPeriod !== 'once') ? (document.getElementById('f-start').value || null) : null;
   const endDate = (draftPeriod !== 'once') ? (document.getElementById('f-end').value || null) : null;
@@ -681,10 +710,10 @@ function saveSheet() {
 
   if (editingId) {
     const plan = plans.find(p => p.id === editingId);
-    Object.assign(plan, { title, category: draftCat, period: draftPeriod, note, due, importance, startDate, endDate, subtasks });
+    Object.assign(plan, { title, category: draftCat, period: draftPeriod, onceType, note, due, importance, startDate, endDate, subtasks });
     reconcile(plan);
   } else {
-    plans.push({ id: uid(), title, category: draftCat, period: draftPeriod, note, due, importance, startDate, endDate, subtasks, createdAt: Date.now() });
+    plans.push({ id: uid(), title, category: draftCat, period: draftPeriod, onceType, note, due, importance, startDate, endDate, subtasks, createdAt: Date.now() });
   }
   commit(); render(); closeSheet();
 }
