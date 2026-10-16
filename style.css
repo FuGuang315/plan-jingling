@@ -40,6 +40,7 @@ body {
   display: grid; place-items: center;
   font-size: 26px;
   box-shadow: var(--shadow);
+  border: 0; cursor: pointer; padding: 0;
 }
 .brand h1 { margin: 0; font-size: 20px; letter-spacing: .5px; }
 .brand p { margin: 2px 0 0; font-size: 12px; color: var(--ink-soft); }
@@ -56,6 +57,20 @@ body {
 .sync-btn span { font-size: 13px; font-weight: 600; }
 .sync-btn.synced { color: var(--blue); }
 .sync-btn.error { color: #FF7A93; }
+.menu-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; border: 0; cursor: pointer;
+  background: #FBFBFE; border-radius: 14px;
+  padding: 15px 16px; margin-bottom: 10px;
+  font-size: 15px; font-weight: 600; color: var(--ink);
+  text-align: left;
+}
+.menu-item span { font-size: 18px; }
+.menu-item:active { background: var(--bg1); }
+.range-row { display: flex; align-items: center; gap: 8px; }
+.range-row input[type=date] { flex: 1; min-width: 0; }
+.range-row span { color: var(--ink-soft); font-size: 13px; }
+.done-date { font-size: 12px; color: #4ED4A8; font-weight: 600; }
 .sync-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.7; margin: 4px 0 14px; }
 .sync-status { font-size: 14px; font-weight: 600; padding: 11px 13px; border-radius: 12px; background: var(--bg1); color: var(--ink); margin-bottom: 4px; }
 .sync-status.synced { color: var(--blue-deep); }
