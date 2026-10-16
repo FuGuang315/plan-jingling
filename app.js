@@ -388,9 +388,12 @@ function renderContent() {
   const active = p => !isFullyDone(p);
   let html = '';
 
-  if (activeTab === 'today') {
+  if (activeTab === 'memo') {
+    const list = plans.filter(p => p.period === 'once' && p.onceType === 'event' && catOk(p) && active(p));
+    html = list.length ? sectionHTML('📌 备忘录(当天事件)', list) : emptyHTML('📌', '没有当天事件');
+  } else if (activeTab === 'today') {
     const daily = plans.filter(p => p.period === 'daily' && catOk(p) && active(p));
-    const once = plans.filter(p => p.period === 'once' && catOk(p) && shown(p, stateAt(p)) < 100);
+    const once = plans.filter(p => p.period === 'once' && p.onceType !== 'event' && catOk(p) && active(p));
     if (!daily.length && !once.length) { el.innerHTML = emptyHTML('🐳', '今天没有要做的,真棒'); return; }
     const miss = missSummary();
     if (miss.count > 0) {
@@ -398,7 +401,7 @@ function renderContent() {
       html += `<div class="card miss-banner" data-action="miss"><span>⚠️</span><div>${txt}<small>点我补卡</small></div></div>`;
     }
     if (daily.length) html += sectionHTML('🌤️ 每天打卡', daily);
-    if (once.length) html += sectionHTML('📌 待办', once);
+    if (once.length) html += sectionHTML('⏰ 待办 / 截止', once);
   } else if (activeTab === 'week') {
     const list = plans.filter(p => p.period === 'weekly' && catOk(p) && active(p));
     html = list.length ? sectionHTML('🗓️ 本周目标', list) : emptyHTML('🗓️', '本周没有目标');
@@ -418,15 +421,6 @@ function renderContent() {
       : emptyHTML('✅', '还没有彻底完成的任务');
   } else if (activeTab === 'calendar') {
     html = renderCalendar();
-  } else {
-    const groups = [
-      ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && active(p))],
-      ['单次', plans.filter(p => p.period === 'once' && catOk(p) && active(p))],
-      ['每周', plans.filter(p => p.period === 'weekly' && catOk(p) && active(p))],
-      ['每月', plans.filter(p => p.period === 'monthly' && catOk(p) && active(p))],
-    ];
-    if (!groups.some(g => g[1].length)) { el.innerHTML = emptyHTML('🎉', '没有进行中的任务,真棒!'); return; }
-    for (const [t, list] of groups) if (list.length) html += sectionHTML(t, list);
   }
   el.innerHTML = html;
 }
@@ -607,6 +601,7 @@ content.addEventListener('click', (e) => {
 // ---------- 底部导航 / 分类 ----------
 document.getElementById('tabbar').addEventListener('click', (e) => {
   const t = e.target.closest('.tab'); if (!t) return;
+  if (t.id === 'sort-btn') { openSort(); return; }
   activeTab = t.dataset.tab;
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
   renderContent();
@@ -804,6 +799,8 @@ function renderMissBody() {
   }
   el.innerHTML = any ? html : '<div class="empty"><span class="big">🎉</span>没有漏打卡,真棒</div>';
 }
+
+function openSort() { alertBox('排序功能下一步做哦,先看看新的标签栏'); }
 
 // ---------- 问候语 / 启动 ----------
 function greet() {
