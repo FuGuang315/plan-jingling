@@ -25,6 +25,9 @@ let plans = load(LS_PLANS, []);
 let progress = load(LS_PROGRESS, {});
 let activeTab = 'today';
 let prevTab = 'today';
+let calYear = new Date().getFullYear();
+let calMonth = new Date().getMonth();
+let calSel = dateStr(new Date());
 let activeCat = '全部';
 let editingId = null;
 let draftCat = '学习';
@@ -174,6 +177,24 @@ function missSummary() {
   }
   return { count: total, maxCon };
 }
+function planOnDay(plan, ds) {
+  if (plan.period === 'daily') {
+    if (plan.startDate && ds < plan.startDate) return false;
+    if (plan.endDate && ds > plan.endDate) return false;
+    return true;
+  }
+  if (plan.period === 'once') {
+    const s = plan.startDate, e = plan.due;
+    if (s && e) return ds >= s && ds <= e;   // 多天任务
+    if (e) return ds === e;                    // 当天(截止日)
+    if (s) return ds === s;                    // 当天(开始日)
+    return false;                              // 无日期
+  }
+  return false; // 每周/每月暂不进日历
+}
+function tasksOnDay(ds) {
+  return plans.filter(p => planOnDay(p, ds));
+}
 
 // ---------- 云端同步 ----------
 function ghFetch(url, opts = {}) {
@@ -310,8 +331,8 @@ function disconnectSync() {
 // ---------- 渲染 ----------
 function render() { renderChips(); renderContent(); updateChrome(); }
 function updateChrome() {
-  const inDone = activeTab === 'done';
-  const set = (el) => { if (el) el.style.display = inDone ? 'none' : ''; };
+  const inFull = activeTab === 'done' || activeTab === 'calendar';
+  const set = (el) => { if (el) el.style.display = inFull ? 'none' : ''; };
   set(document.getElementById('tabbar'));
   set(document.getElementById('cat-chips'));
   set(document.getElementById('fab'));
@@ -358,6 +379,8 @@ function renderContent() {
     html += groups.some(g => g[1].length)
       ? groups.map(([t, list]) => list.length ? `<div class="section-title">✅ ${t}</div>` + list.map(doneCardHTML).join('') : '').join('')
       : emptyHTML('✅', '还没有彻底完成的任务');
+  } else if (activeTab === 'calendar') {
+    html = renderCalendar();
   } else {
     const groups = [
       ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && active(p))],
@@ -389,6 +412,33 @@ function doneCardHTML(plan) {
       <button class="icon-btn" data-action="del" data-id="${plan.id}">🗑️</button>
     </div>
   </div>`;
+}
+
+function renderCalendar() {
+  const today = dateStr(new Date());
+  const y = calYear, m = calMonth;
+  const wd = '日一二三四五六';
+  const sd = new Date(calSel + 'T00:00:00');
+  const selLabel = `${sd.getMonth() + 1}月${sd.getDate()}日 周${wd[sd.getDay()]}`;
+  let html = `<div class="done-head"><button class="back-btn" data-action="back">← 返回</button><span>日历</span></div>`;
+  html += `<div class="cal-head"><button class="cal-nav" data-action="cal-prev">‹</button><span>${y}年${m + 1}月</span><button class="cal-nav" data-action="cal-next">›</button></div>`;
+  html += `<div class="cal-week">${['日', '一', '二', '三', '四', '五', '六'].map(w => `<span>${w}</span>`).join('')}</div>`;
+  const firstDow = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  html += `<div class="cal-grid">`;
+  for (let i = 0; i < firstDow; i++) html += `<div class="cal-day empty"></div>`;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ds = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const types = [...new Set(tasksOnDay(ds).map(p => p.period))];
+    const dots = types.length ? `<div class="cal-dots">${types.map(t => `<i class="dot ${t}"></i>`).join('')}</div>` : '';
+    html += `<div class="cal-day ${ds === today ? 'today' : ''} ${ds === calSel ? 'sel' : ''}" data-action="cal-day" data-date="${ds}">${d}${dots}</div>`;
+  }
+  html += `</div>`;
+  const selTasks = tasksOnDay(calSel);
+  html += `<div class="cal-detail"><div class="cal-detail-title">${selLabel}</div>`;
+  html += selTasks.length ? selTasks.map(cardHTML).join('') : `<div class="empty">这天没有任务</div>`;
+  html += `</div>`;
+  return html;
 }
 
 function sectionHTML(title, list) {
@@ -493,6 +543,9 @@ content.addEventListener('click', (e) => {
   const action = b.dataset.action;
   if (action === 'back') { activeTab = prevTab; render(); return; }
   if (action === 'miss') { openMiss(); return; }
+  if (action === 'cal-prev') { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } render(); return; }
+  if (action === 'cal-next') { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } render(); return; }
+  if (action === 'cal-day') { calSel = b.dataset.date; render(); return; }
   const id = b.dataset.id;
   const plan = plans.find(p => p.id === id); if (!plan) return;
 
@@ -634,6 +687,15 @@ document.getElementById('menu-done').addEventListener('click', () => {
   document.getElementById('whale-overlay').hidden = true;
   prevTab = activeTab;
   activeTab = 'done';
+  render();
+});
+document.getElementById('menu-cal').addEventListener('click', () => {
+  document.getElementById('whale-overlay').hidden = true;
+  prevTab = activeTab;
+  calYear = new Date().getFullYear();
+  calMonth = new Date().getMonth();
+  calSel = dateStr(new Date());
+  activeTab = 'calendar';
   render();
 });
 
