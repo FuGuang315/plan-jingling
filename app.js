@@ -94,6 +94,15 @@ function countdownText(plan) {
   if (d > 1) return ev ? `还有 ${d} 天` : `还有 ${d} 天截止`;
   return ev ? `已过 ${-d} 天` : `已截止 ${-d} 天`;
 }
+function periodRemain(plan) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (plan.period === 'weekly') return (7 - today.getDay()) % 7;
+  if (plan.period === 'monthly') {
+    const last = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    return Math.round((last - today) / 86400000);
+  }
+  return null;
+}
 function b64encode(str) {
   const bytes = new TextEncoder().encode(str);
   let bin = '';
@@ -505,6 +514,8 @@ function cardHTML(plan) {
     html += `<p class="card-note">${ic} ${cd}（${esc(plan.due)}）</p>`;
   }
   if (plan.endDate) html += `<p class="card-note">📅 截止 ${esc(plan.endDate)}</p>`;
+  if (plan.period === 'weekly') html += `<p class="card-note">🗓️ 本周剩余 ${periodRemain(plan)} 天</p>`;
+  if (plan.period === 'monthly') html += `<p class="card-note">📆 本月剩余 ${periodRemain(plan)} 天</p>`;
   if (plan.note) html += `<p class="card-note">${esc(plan.note)}</p>`;
 
   if (plan.subtasks.length) {
