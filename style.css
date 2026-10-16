@@ -127,7 +127,11 @@ body {
   background: linear-gradient(90deg, var(--blue), var(--pink));
   border-radius: 999px; transition: width .3s ease;
 }
-.pct { font-size: 12px; font-weight: 700; color: var(--blue-deep); min-width: 36px; text-align: right; }
+.pct { font-size: 13px; font-weight: 700; color: var(--blue-deep); width: 50px; text-align: center; border: 1.5px solid var(--line); border-radius: 8px; padding: 3px 2px; background: #FBFBFE; }
+.imp { font-size: 11px; font-weight: 700; flex: 0 0 auto; }
+#dialog-overlay { align-items: center; }
+.dialog-sheet { max-width: 340px; border-radius: 20px; margin: 0 24px; }
+.dialog-msg { font-size: 15px; line-height: 1.6; margin: 8px 2px 18px; white-space: pre-wrap; }
 
 /* 手动进度滑块 */
 .slider-row { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
