@@ -340,8 +340,6 @@ function cardHTML(plan) {
     html += `</div>`;
   }
 
-  html += `<div class="progress-row"><div class="bar"><i style="width:${pct}%"></i></div><input class="pct" type="number" min="0" max="100" value="${pct}" data-action="pct" data-id="${plan.id}"/></div>`;
-
   if (plan.period === 'daily' && !plan.subtasks.length) {
     const doneToday = !!(st && st.doneAt);
     html += `<div class="card-foot">
@@ -352,6 +350,7 @@ function cardHTML(plan) {
       <button class="icon-btn" data-action="del" data-id="${plan.id}">🗑️</button>
     </div>`;
   } else {
+    html += `<div class="progress-row"><div class="bar"><i style="width:${pct}%"></i></div><input class="pct" type="number" min="0" max="100" value="${pct}" data-action="pct" data-id="${plan.id}"/></div>`;
     html += `<div class="slider-row"><input type="range" min="0" max="100" step="1" value="${pct}" data-action="slide" data-id="${plan.id}"/></div>
     <div class="card-foot">
       <button class="btn ${done ? 'ghost' : 'primary'} mini" data-action="done" data-id="${plan.id}">${done ? '↩ 取消完成' : '完成'}</button>
