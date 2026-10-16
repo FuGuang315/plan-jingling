@@ -179,6 +179,7 @@ function missSummary() {
 }
 function planOnDay(plan, ds) {
   if (plan.period === 'daily') {
+    if (!plan.startDate && ds < dateStr(new Date())) return false;  // 无开始日期的无限循环:今天之前不显示
     if (plan.startDate && ds < plan.startDate) return false;
     if (plan.endDate && ds > plan.endDate) return false;
     return true;
