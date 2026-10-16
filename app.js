@@ -128,6 +128,9 @@ function shown(plan, st) {
 function isDayDone(plan, d) {
   return shown(plan, stateAt(plan, d)) >= 100;
 }
+function isDoneNow(plan) {
+  return shown(plan, stateAt(plan)) >= 100;
+}
 function streakOf(plan) {
   let n = 0;
   const d = new Date();
@@ -294,14 +297,23 @@ function renderContent() {
   } else if (activeTab === 'month') {
     const list = plans.filter(p => p.period === 'monthly' && catOk(p));
     html = list.length ? sectionHTML('📆 本月目标', list) : emptyHTML('📆', '本月还没有目标');
+  } else if (activeTab === 'done') {
+    const groups = [
+      ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && isDoneNow(p))],
+      ['单次', plans.filter(p => p.period === 'once' && catOk(p) && isDoneNow(p))],
+      ['每周', plans.filter(p => p.period === 'weekly' && catOk(p) && isDoneNow(p))],
+      ['每月', plans.filter(p => p.period === 'monthly' && catOk(p) && isDoneNow(p))],
+    ];
+    if (!groups.some(g => g[1].length)) { el.innerHTML = emptyHTML('✅', '还没有已完成的任务'); return; }
+    for (const [t, list] of groups) if (list.length) html += sectionHTML(t, list);
   } else {
     const groups = [
-      ['每天', plans.filter(p => p.period === 'daily' && catOk(p))],
-      ['单次', plans.filter(p => p.period === 'once' && catOk(p))],
-      ['每周', plans.filter(p => p.period === 'weekly' && catOk(p))],
-      ['每月', plans.filter(p => p.period === 'monthly' && catOk(p))],
+      ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && !isDoneNow(p))],
+      ['单次', plans.filter(p => p.period === 'once' && catOk(p) && !isDoneNow(p))],
+      ['每周', plans.filter(p => p.period === 'weekly' && catOk(p) && !isDoneNow(p))],
+      ['每月', plans.filter(p => p.period === 'monthly' && catOk(p) && !isDoneNow(p))],
     ];
-    if (!groups.some(g => g[1].length)) { el.innerHTML = emptyHTML('🐳', '还没有计划,点下面 ＋ 新建一个吧'); return; }
+    if (!groups.some(g => g[1].length)) { el.innerHTML = emptyHTML('🎉', '没有未完成的任务,真棒!'); return; }
     for (const [t, list] of groups) if (list.length) html += sectionHTML(t, list);
   }
   el.innerHTML = html;
