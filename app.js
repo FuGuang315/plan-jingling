@@ -144,14 +144,16 @@ function streakOf(plan) {
   while (isDayDone(plan, d)) { n++; d.setDate(d.getDate() - 1); }
   return n;
 }
-function missedDays(plan, lookback = 7) {
+function missedDays(plan, lookback = 30) {
   const out = [];
   const wd = '日一二三四五六';
   const today = new Date();
+  const created = plan.createdAt ? dateStr(new Date(plan.createdAt)) : null;
   for (let i = 1; i <= lookback; i++) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
     const ds = dateStr(d);
+    if (created && ds < created) continue;
     if (plan.startDate && ds < plan.startDate) continue;
     if (plan.endDate && ds > plan.endDate) continue;
     if (!isDayDone(plan, d)) out.push({ date: ds, label: '周' + wd[d.getDay()] + ' ' + (d.getMonth() + 1) + '月' + d.getDate() + '日' });
@@ -163,11 +165,13 @@ function missSummary() {
   let total = 0, maxCon = 0;
   const today = new Date();
   for (const p of daily) {
-    total += missedDays(p, 7).length;
+    total += missedDays(p, 365).length;
     let con = 0;
-    for (let i = 1; i <= 7; i++) {
+    const created = p.createdAt ? dateStr(new Date(p.createdAt)) : null;
+    for (let i = 1; i <= 365; i++) {
       const d = new Date(today); d.setDate(d.getDate() - i);
       const ds = dateStr(d);
+      if (created && ds < created) break;
       if (p.endDate && ds > p.endDate) continue;
       if (p.startDate && ds < p.startDate) break;
       if (isDayDone(p, d)) break;
@@ -193,8 +197,24 @@ function planOnDay(plan, ds) {
   }
   return false; // 每周/每月暂不进日历
 }
+function dotTypesOnDay(ds) {
+  const d = new Date(ds + 'T00:00:00');
+  const isSunday = d.getDay() === 0;
+  const isMonthEnd = d.getDate() === new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const types = new Set();
+  for (const p of plans) {
+    if (p.period === 'daily' && planOnDay(p, ds)) types.add('daily');
+    else if (p.period === 'once' && planOnDay(p, ds)) types.add('once');
+    else if (p.period === 'weekly' && isSunday && !isFullyDone(p)) types.add('weekly');
+    else if (p.period === 'monthly' && isMonthEnd && !isFullyDone(p)) types.add('monthly');
+  }
+  return types;
+}
 function tasksOnDay(ds) {
-  return plans.filter(p => planOnDay(p, ds));
+  return plans.filter(p => {
+    if (p.period === 'daily' || p.period === 'once') return planOnDay(p, ds);
+    return (p.period === 'weekly' || p.period === 'monthly') && !isFullyDone(p);
+  });
 }
 
 // ---------- 云端同步 ----------
@@ -430,7 +450,7 @@ function renderCalendar() {
   for (let i = 0; i < firstDow; i++) html += `<div class="cal-day empty"></div>`;
   for (let d = 1; d <= daysInMonth; d++) {
     const ds = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    const types = [...new Set(tasksOnDay(ds).map(p => p.period))];
+    const types = [...dotTypesOnDay(ds)];
     const dots = types.length ? `<div class="cal-dots">${types.map(t => `<i class="dot ${t}"></i>`).join('')}</div>` : '';
     html += `<div class="cal-day ${ds === today ? 'today' : ''} ${ds === calSel ? 'sel' : ''}" data-action="cal-day" data-date="${ds}">${d}${dots}</div>`;
   }
@@ -609,7 +629,10 @@ function renderCatSeg() {
     CATS.map(c => `<button class="${draftCat === c ? 'active' : ''}" data-cat="${c}">${c}</button>`).join('');
 }
 function renderPeriodSeg() {
-  document.querySelectorAll('#f-period button').forEach(b => b.classList.toggle('active', b.dataset.period === draftPeriod));
+  const type = draftPeriod === 'once' ? 'once' : 'recurring';
+  document.querySelectorAll('#f-type button').forEach(b => b.classList.toggle('active', b.dataset.type === type));
+  document.getElementById('f-cycle-wrap').hidden = draftPeriod === 'once';
+  document.querySelectorAll('#f-cycle button').forEach(b => b.classList.toggle('active', b.dataset.cycle === draftPeriod));
   document.getElementById('f-due-wrap').hidden = draftPeriod !== 'once';
   document.getElementById('f-range-wrap').hidden = draftPeriod === 'once';
 }
@@ -622,9 +645,14 @@ document.getElementById('f-cat').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   draftCat = b.dataset.cat; renderCatSeg();
 });
-document.getElementById('f-period').addEventListener('click', (e) => {
+document.getElementById('f-type').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
-  draftPeriod = b.dataset.period; renderPeriodSeg();
+  draftPeriod = b.dataset.type === 'once' ? 'once' : (draftPeriod === 'once' ? 'daily' : draftPeriod);
+  renderPeriodSeg();
+});
+document.getElementById('f-cycle').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  draftPeriod = b.dataset.cycle; renderPeriodSeg();
 });
 document.getElementById('f-sub-list').addEventListener('input', (e) => {
   const t = e.target;
@@ -737,7 +765,7 @@ function renderMissBody() {
   let html = '';
   let any = false;
   for (const p of daily) {
-    const days = missedDays(p, 7);
+    const days = missedDays(p, 30);
     if (!days.length) continue;
     any = true;
     html += `<div class="miss-habit">${esc(p.title)}</div>`;
