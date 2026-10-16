@@ -275,7 +275,15 @@ function disconnectSync() {
 }
 
 // ---------- 渲染 ----------
-function render() { renderChips(); renderContent(); }
+function render() { renderChips(); renderContent(); updateChrome(); }
+function updateChrome() {
+  const inDone = activeTab === 'done';
+  const set = (el) => { if (el) el.style.display = inDone ? 'none' : ''; };
+  set(document.getElementById('tabbar'));
+  set(document.getElementById('cat-chips'));
+  set(document.getElementById('fab'));
+  set(document.querySelector('.header'));
+}
 
 function renderChips() {
   const el = document.getElementById('cat-chips');
@@ -445,7 +453,7 @@ content.addEventListener('input', (e) => {
 content.addEventListener('click', (e) => {
   const b = e.target.closest('[data-action]'); if (!b) return;
   const action = b.dataset.action;
-  if (action === 'back') { activeTab = prevTab; renderContent(); return; }
+  if (action === 'back') { activeTab = prevTab; render(); return; }
   const id = b.dataset.id;
   const plan = plans.find(p => p.id === id); if (!plan) return;
 
@@ -587,7 +595,7 @@ document.getElementById('menu-done').addEventListener('click', () => {
   document.getElementById('whale-overlay').hidden = true;
   prevTab = activeTab;
   activeTab = 'done';
-  renderContent();
+  render();
 });
 
 function handlePlanAction(action, id) {
