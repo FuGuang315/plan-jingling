@@ -15,13 +15,13 @@
     <!-- 顶部 -->
     <header class="header">
       <div class="brand">
-        <button class="brand-icon" id="whale-btn" title="更多">🐋</button>
+        <span class="brand-icon">🐋</span>
         <div>
           <h1>计划鲸灵</h1>
           <p id="today-line">今天也要加油哦</p>
         </div>
       </div>
-      <button class="sync-btn" id="sync-btn" title="同步">☁️<span>同步</span></button>
+      <button class="sync-btn" id="menu-btn" title="菜单">☰<span>菜单</span></button>
     </header>
 
     <!-- 分类筛选 -->
@@ -135,6 +135,7 @@
   <div class="overlay" id="whale-overlay" hidden>
     <div class="sheet">
       <div class="sheet-head"><h2>更多</h2><button class="icon-btn" id="whale-close">✕</button></div>
+      <button class="menu-item" id="menu-sync"><span>☁️</span>同步<span class="menu-status" id="menu-sync-status"></span></button>
       <button class="menu-item" id="menu-done"><span>✅</span>已完成</button>
       <!-- 以后新功能加这里 -->
     </div>
