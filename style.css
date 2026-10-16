@@ -67,6 +67,7 @@ body {
 }
 .menu-item span { font-size: 18px; }
 .menu-item:active { background: var(--bg1); }
+.menu-status { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--ink-soft); }
 .range-row { display: flex; align-items: center; gap: 8px; }
 .range-row input[type=date] { flex: 1; min-width: 0; }
 .range-row span { color: var(--ink-soft); font-size: 13px; }
