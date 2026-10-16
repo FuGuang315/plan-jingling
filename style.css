@@ -82,6 +82,22 @@ body {
 .miss-habit { font-size: 14px; font-weight: 700; margin: 12px 0 6px; }
 .miss-day { display: flex; align-items: center; gap: 8px; padding: 9px 2px; font-size: 14px; }
 .miss-day input { width: 18px; height: 18px; accent-color: var(--blue); }
+.cal-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 12px; }
+.cal-head span { font-size: 16px; font-weight: 700; }
+.cal-nav { border: 0; background: var(--card); border-radius: 10px; width: 38px; height: 38px; font-size: 20px; cursor: pointer; color: var(--blue-deep); box-shadow: var(--shadow); }
+.cal-week { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; font-size: 12px; color: var(--ink-soft); padding-bottom: 6px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+.cal-day { position: relative; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; font-size: 14px; border-radius: 10px; cursor: pointer; background: var(--card); box-shadow: 0 2px 6px rgba(108,139,255,.06); }
+.cal-day.empty { background: transparent; box-shadow: none; cursor: default; }
+.cal-day.today { border: 2px solid var(--blue); }
+.cal-day.sel { background: var(--blue); color: #fff; }
+.cal-dots { position: absolute; bottom: 4px; display: flex; gap: 3px; }
+.dot { width: 5px; height: 5px; border-radius: 50%; }
+.dot.daily { background: var(--blue); }
+.dot.once { background: var(--pink); }
+.cal-day.sel .dot { background: #fff; }
+.cal-detail { margin-top: 16px; }
+.cal-detail-title { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
 .sync-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.7; margin: 4px 0 14px; }
 .sync-status { font-size: 14px; font-weight: 600; padding: 11px 13px; border-radius: 12px; background: var(--bg1); color: var(--ink); margin-bottom: 4px; }
 .sync-status.synced { color: var(--blue-deep); }
