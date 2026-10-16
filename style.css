@@ -221,6 +221,7 @@ body {
 }
 .tab span { font-size: 19px; }
 .tab.active { background: var(--bg1); color: var(--blue-deep); font-weight: 700; }
+.sort-btn { border-left: 1px solid var(--line); color: var(--blue-deep); }
 
 /* ---------- 悬浮添加按钮 ---------- */
 .fab {
