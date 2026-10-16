@@ -128,8 +128,10 @@ function shown(plan, st) {
 function isDayDone(plan, d) {
   return shown(plan, stateAt(plan, d)) >= 100;
 }
-function isDoneNow(plan) {
-  return shown(plan, stateAt(plan)) >= 100;
+function isFullyDone(plan) {
+  if (plan.period === 'once') return shown(plan, stateAt(plan)) >= 100;
+  if (plan.endDate) return dateStr(new Date()) > plan.endDate;
+  return false;
 }
 function streakOf(plan) {
   let n = 0;
@@ -283,40 +285,65 @@ function renderChips() {
 function renderContent() {
   const el = document.getElementById('content');
   const catOk = p => activeCat === '全部' || p.category === activeCat;
+  const active = p => !isFullyDone(p);
   let html = '';
 
   if (activeTab === 'today') {
-    const daily = plans.filter(p => p.period === 'daily' && catOk(p));
+    const daily = plans.filter(p => p.period === 'daily' && catOk(p) && active(p));
     const once = plans.filter(p => p.period === 'once' && catOk(p) && shown(p, stateAt(p)) < 100);
-    if (!daily.length && !once.length) { el.innerHTML = emptyHTML('🐳', '今天还没有计划,点下面 ＋ 新建一个吧'); return; }
+    if (!daily.length && !once.length) { el.innerHTML = emptyHTML('🐳', '今天没有要做的,真棒'); return; }
     if (daily.length) html += sectionHTML('🌤️ 每天打卡', daily);
     if (once.length) html += sectionHTML('📌 待办', once);
   } else if (activeTab === 'week') {
-    const list = plans.filter(p => p.period === 'weekly' && catOk(p));
-    html = list.length ? sectionHTML('🗓️ 本周目标', list) : emptyHTML('🗓️', '本周还没有目标');
+    const list = plans.filter(p => p.period === 'weekly' && catOk(p) && active(p));
+    html = list.length ? sectionHTML('🗓️ 本周目标', list) : emptyHTML('🗓️', '本周没有目标');
   } else if (activeTab === 'month') {
-    const list = plans.filter(p => p.period === 'monthly' && catOk(p));
-    html = list.length ? sectionHTML('📆 本月目标', list) : emptyHTML('📆', '本月还没有目标');
-  } else if (activeTab === 'done') {
-    const groups = [
-      ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && isDoneNow(p))],
-      ['单次', plans.filter(p => p.period === 'once' && catOk(p) && isDoneNow(p))],
-      ['每周', plans.filter(p => p.period === 'weekly' && catOk(p) && isDoneNow(p))],
-      ['每月', plans.filter(p => p.period === 'monthly' && catOk(p) && isDoneNow(p))],
-    ];
-    if (!groups.some(g => g[1].length)) { el.innerHTML = emptyHTML('✅', '还没有已完成的任务'); return; }
-    for (const [t, list] of groups) if (list.length) html += sectionHTML(t, list);
+    const list = plans.filter(p => p.period === 'monthly' && catOk(p) && active(p));
+    html = list.length ? sectionHTML('📆 本月目标', list) : emptyHTML('📆', '本月没有目标');
   } else {
     const groups = [
-      ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && !isDoneNow(p))],
-      ['单次', plans.filter(p => p.period === 'once' && catOk(p) && !isDoneNow(p))],
-      ['每周', plans.filter(p => p.period === 'weekly' && catOk(p) && !isDoneNow(p))],
-      ['每月', plans.filter(p => p.period === 'monthly' && catOk(p) && !isDoneNow(p))],
+      ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && active(p))],
+      ['单次', plans.filter(p => p.period === 'once' && catOk(p) && active(p))],
+      ['每周', plans.filter(p => p.period === 'weekly' && catOk(p) && active(p))],
+      ['每月', plans.filter(p => p.period === 'monthly' && catOk(p) && active(p))],
     ];
-    if (!groups.some(g => g[1].length)) { el.innerHTML = emptyHTML('🎉', '没有未完成的任务,真棒!'); return; }
+    if (!groups.some(g => g[1].length)) { el.innerHTML = emptyHTML('🎉', '没有进行中的任务,真棒!'); return; }
     for (const [t, list] of groups) if (list.length) html += sectionHTML(t, list);
   }
   el.innerHTML = html;
+}
+
+function renderDoneBody() {
+  const el = document.getElementById('done-body');
+  const catOk = p => activeCat === '全部' || p.category === activeCat;
+  const groups = [
+    ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && isFullyDone(p))],
+    ['单次', plans.filter(p => p.period === 'once' && catOk(p) && isFullyDone(p))],
+    ['每周', plans.filter(p => p.period === 'weekly' && catOk(p) && isFullyDone(p))],
+    ['每月', plans.filter(p => p.period === 'monthly' && catOk(p) && isFullyDone(p))],
+  ];
+  if (!groups.some(g => g[1].length)) { el.innerHTML = '<div class="empty"><span class="big">✅</span>还没有彻底完成的任务</div>'; return; }
+  el.innerHTML = groups.map(([t, list]) => list.length ? `<div class="section-title">✅ ${t}</div>` + list.map(doneCardHTML).join('') : '').join('');
+}
+
+function doneCardHTML(plan) {
+  const color = CAT_COLORS[plan.category] || CAT_COLORS['其他'];
+  const imp = plan.importance || 5;
+  const impColor = imp >= 8 ? '#FF5D7A' : (imp >= 5 ? '#FF9A3D' : '#A0A8C0');
+  return `<div class="card">
+    <div class="card-top">
+      <span class="tag" style="background:${color}">${esc(plan.category)}</span>
+      <div class="card-title done">${esc(plan.title)}</div>
+      <span class="imp" style="color:${impColor}">★${imp}</span>
+      <span class="badge">${PERIOD_LABEL[plan.period]}</span>
+    </div>
+    <div class="card-foot">
+      <span class="done-date">✓ 已完成</span>
+      <span style="flex:1"></span>
+      <button class="icon-btn" data-action="edit" data-id="${plan.id}">✏️</button>
+      <button class="icon-btn" data-action="del" data-id="${plan.id}">🗑️</button>
+    </div>
+  </div>`;
 }
 
 function sectionHTML(title, list) {
@@ -329,18 +356,21 @@ function emptyHTML(emoji, text) {
 function cardHTML(plan) {
   const st = stateAt(plan);
   const pct = shown(plan, st);
-  const done = pct >= 100;
+  const fullyDone = isFullyDone(plan);
+  const checked = pct >= 100;
   const color = CAT_COLORS[plan.category] || CAT_COLORS['其他'];
   const imp = plan.importance || 5;
   const impColor = imp >= 8 ? '#FF5D7A' : (imp >= 5 ? '#FF9A3D' : '#A0A8C0');
   let html = `<div class="card" data-id="${plan.id}">
     <div class="card-top">
       <span class="tag" style="background:${color}">${esc(plan.category)}</span>
-      <div class="card-title ${done ? 'done' : ''}">${esc(plan.title)}</div>
+      <div class="card-title ${fullyDone ? 'done' : ''}">${esc(plan.title)}</div>
+      ${checked && !fullyDone ? '<span class="tag" style="background:#4ED4A8">✓ 已打卡</span>' : ''}
       <span class="imp" style="color:${impColor}">★${imp}</span>
       <span class="badge">${PERIOD_LABEL[plan.period]}</span>
     </div>`;
   if (plan.period === 'once' && plan.due) html += `<p class="card-note">⏰ 截止 ${esc(plan.due)}</p>`;
+  if (plan.endDate) html += `<p class="card-note">📅 截止 ${esc(plan.endDate)}</p>`;
   if (plan.note) html += `<p class="card-note">${esc(plan.note)}</p>`;
 
   if (plan.subtasks.length) {
@@ -355,7 +385,7 @@ function cardHTML(plan) {
   if (plan.period === 'daily' && !plan.subtasks.length) {
     const doneToday = !!(st && st.doneAt);
     html += `<div class="card-foot">
-      <button class="btn ${doneToday ? 'ghost' : 'primary'} mini" data-action="check" data-id="${plan.id}">${doneToday ? '已打卡 ✓' : '打卡'}</button>
+      <button class="btn ${doneToday ? 'ghost' : 'primary'} mini" data-action="check" data-id="${plan.id}">${doneToday ? '✓ 已打卡' : '打卡'}</button>
       <span class="streak">🔥 ${streakOf(plan)} 天</span>
       <span style="flex:1"></span>
       <button class="icon-btn" data-action="edit" data-id="${plan.id}">✏️</button>
@@ -365,7 +395,7 @@ function cardHTML(plan) {
     html += `<div class="progress-row"><div class="bar"><i style="width:${pct}%"></i></div><input class="pct" type="number" min="0" max="100" value="${pct}" data-action="pct" data-id="${plan.id}"/></div>`;
     html += `<div class="slider-row"><input type="range" min="0" max="100" step="1" value="${pct}" data-action="slide" data-id="${plan.id}"/></div>
     <div class="card-foot">
-      <button class="btn ${done ? 'ghost' : 'primary'} mini" data-action="done" data-id="${plan.id}">${done ? '↩ 取消完成' : '完成'}</button>
+      <button class="btn ${checked ? 'ghost' : 'primary'} mini" data-action="done" data-id="${plan.id}">${checked ? '↩ 取消完成' : '完成'}</button>
       ${plan.period === 'daily' ? `<span class="streak">🔥 ${streakOf(plan)} 天</span>` : ''}
       <span style="flex:1"></span>
       <button class="icon-btn" data-action="edit" data-id="${plan.id}">✏️</button>
@@ -428,16 +458,8 @@ content.addEventListener('click', (e) => {
     const st = curState(plan);
     st.manual = (shown(plan, st) >= 100) ? 0 : 100;
     commit(); renderContent();
-  } else if (action === 'edit') {
-    openSheet(id);
-  } else if (action === 'del') {
-    showDialog('删除「' + plan.title + '」?', { okText: '删除' }).then(ok => {
-      if (ok) {
-        plans = plans.filter(p => p.id !== id);
-        delete progress[id];
-        commit(); render();
-      }
-    });
+  } else if (action === 'edit' || action === 'del') {
+    handlePlanAction(action, id);
   }
 });
 
@@ -470,6 +492,8 @@ function openSheet(id) {
   document.getElementById('f-note').value = plan ? (plan.note || '') : '';
   document.getElementById('f-due').value = (plan && plan.due) ? plan.due : '';
   document.getElementById('f-imp').value = plan ? (plan.importance || 5) : 5;
+  document.getElementById('f-start').value = (plan && plan.startDate) ? plan.startDate : '';
+  document.getElementById('f-end').value = (plan && plan.endDate) ? plan.endDate : '';
   draftCat = plan ? plan.category : '学习';
   draftPeriod = plan ? plan.period : 'daily';
   draftSubs = plan ? plan.subtasks.map(s => s.text) : [];
@@ -486,6 +510,7 @@ function renderCatSeg() {
 function renderPeriodSeg() {
   document.querySelectorAll('#f-period button').forEach(b => b.classList.toggle('active', b.dataset.period === draftPeriod));
   document.getElementById('f-due-wrap').hidden = draftPeriod !== 'once';
+  document.getElementById('f-range-wrap').hidden = draftPeriod === 'once';
 }
 function renderSubDraft() {
   document.getElementById('f-sub-list').innerHTML =
@@ -521,14 +546,16 @@ function saveSheet() {
   const note = document.getElementById('f-note').value.trim();
   const due = (draftPeriod === 'once') ? (document.getElementById('f-due').value || null) : null;
   const importance = Math.max(1, Math.min(10, +document.getElementById('f-imp').value || 5));
+  const startDate = (draftPeriod !== 'once') ? (document.getElementById('f-start').value || null) : null;
+  const endDate = (draftPeriod !== 'once') ? (document.getElementById('f-end').value || null) : null;
   const subtasks = draftSubs.map(t => ({ id: uid(), text: t })).filter(s => s.text.trim());
 
   if (editingId) {
     const plan = plans.find(p => p.id === editingId);
-    Object.assign(plan, { title, category: draftCat, period: draftPeriod, note, due, importance, subtasks });
+    Object.assign(plan, { title, category: draftCat, period: draftPeriod, note, due, importance, startDate, endDate, subtasks });
     reconcile(plan);
   } else {
-    plans.push({ id: uid(), title, category: draftCat, period: draftPeriod, note, due, importance, subtasks, createdAt: Date.now() });
+    plans.push({ id: uid(), title, category: draftCat, period: draftPeriod, note, due, importance, startDate, endDate, subtasks, createdAt: Date.now() });
   }
   commit(); render(); closeSheet();
 }
@@ -547,6 +574,36 @@ document.getElementById('sync-btn').addEventListener('click', openSync);
 document.getElementById('sync-close').addEventListener('click', () => { document.getElementById('sync-overlay').hidden = true; });
 document.getElementById('sync-overlay').addEventListener('click', (e) => {
   if (e.target === document.getElementById('sync-overlay')) document.getElementById('sync-overlay').hidden = true;
+});
+
+// 鲸鱼菜单 / 已完成
+document.getElementById('whale-btn').addEventListener('click', () => { document.getElementById('whale-overlay').hidden = false; });
+document.getElementById('whale-close').addEventListener('click', () => { document.getElementById('whale-overlay').hidden = true; });
+document.getElementById('whale-overlay').addEventListener('click', (e) => { if (e.target === document.getElementById('whale-overlay')) document.getElementById('whale-overlay').hidden = true; });
+document.getElementById('menu-done').addEventListener('click', () => {
+  document.getElementById('whale-overlay').hidden = true;
+  renderDoneBody();
+  document.getElementById('done-overlay').hidden = false;
+});
+document.getElementById('done-close').addEventListener('click', () => { document.getElementById('done-overlay').hidden = true; });
+document.getElementById('done-overlay').addEventListener('click', (e) => { if (e.target === document.getElementById('done-overlay')) document.getElementById('done-overlay').hidden = true; });
+
+function handlePlanAction(action, id) {
+  const plan = plans.find(p => p.id === id); if (!plan) return;
+  if (action === 'edit') { openSheet(id); return; }
+  if (action === 'del') {
+    showDialog('删除「' + plan.title + '」?', { okText: '删除' }).then(ok => {
+      if (ok) {
+        plans = plans.filter(p => p.id !== id);
+        delete progress[id];
+        commit(); render(); renderDoneBody();
+      }
+    });
+  }
+}
+document.getElementById('done-body').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-action]'); if (!b) return;
+  handlePlanAction(b.dataset.action, b.dataset.id);
 });
 
 // ---------- 问候语 / 启动 ----------
