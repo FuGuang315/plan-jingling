@@ -72,6 +72,9 @@ body {
 .range-row input[type=date] { flex: 1; min-width: 0; }
 .range-row span { color: var(--ink-soft); font-size: 13px; }
 .done-date { font-size: 12px; color: #4ED4A8; font-weight: 600; }
+.done-head { display: flex; align-items: center; gap: 10px; margin: 4px 4px 12px; }
+.done-head .back-btn { border: 0; background: var(--card); border-radius: 12px; padding: 8px 14px; font-size: 14px; cursor: pointer; color: var(--blue-deep); box-shadow: var(--shadow); }
+.done-head span { font-size: 15px; font-weight: 700; }
 .sync-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.7; margin: 4px 0 14px; }
 .sync-status { font-size: 14px; font-weight: 600; padding: 11px 13px; border-radius: 12px; background: var(--bg1); color: var(--ink); margin-bottom: 4px; }
 .sync-status.synced { color: var(--blue-deep); }
