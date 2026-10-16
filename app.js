@@ -216,11 +216,11 @@ function statusMsg(s) {
 }
 function setSyncState(s, msg) { syncState = s; if (msg !== undefined) syncError = msg; updateSyncBtn(); }
 function updateSyncBtn() {
-  const btn = document.getElementById('sync-btn');
-  if (!btn) return;
-  btn.classList.remove('synced', 'error');
-  if (syncState === 'synced') btn.classList.add('synced');
-  else if (syncState === 'error') btn.classList.add('error');
+  const el = document.getElementById('menu-sync-status');
+  if (!el) return;
+  const map = { off: '未连接', pending: '同步中…', synced: '已同步', error: '失败' };
+  el.textContent = syncToken ? (map[syncState] || '') : '未连接';
+  el.style.color = syncState === 'synced' ? 'var(--blue)' : (syncState === 'error' ? '#FF7A93' : 'var(--ink-soft)');
 }
 
 // ---------- 同步弹窗 ----------
@@ -570,16 +570,19 @@ function reconcile(plan) {
 }
 
 // ---------- 同步按钮 / 弹窗事件 ----------
-document.getElementById('sync-btn').addEventListener('click', openSync);
 document.getElementById('sync-close').addEventListener('click', () => { document.getElementById('sync-overlay').hidden = true; });
 document.getElementById('sync-overlay').addEventListener('click', (e) => {
   if (e.target === document.getElementById('sync-overlay')) document.getElementById('sync-overlay').hidden = true;
 });
 
 // 鲸鱼菜单 / 已完成
-document.getElementById('whale-btn').addEventListener('click', () => { document.getElementById('whale-overlay').hidden = false; });
+document.getElementById('menu-btn').addEventListener('click', () => { document.getElementById('whale-overlay').hidden = false; });
 document.getElementById('whale-close').addEventListener('click', () => { document.getElementById('whale-overlay').hidden = true; });
 document.getElementById('whale-overlay').addEventListener('click', (e) => { if (e.target === document.getElementById('whale-overlay')) document.getElementById('whale-overlay').hidden = true; });
+document.getElementById('menu-sync').addEventListener('click', () => {
+  document.getElementById('whale-overlay').hidden = true;
+  openSync();
+});
 document.getElementById('menu-done').addEventListener('click', () => {
   document.getElementById('whale-overlay').hidden = true;
   renderDoneBody();
