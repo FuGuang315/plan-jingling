@@ -28,6 +28,8 @@ let prevTab = 'today';
 let calYear = new Date().getFullYear();
 let calMonth = new Date().getMonth();
 let calSel = dateStr(new Date());
+let sortGroups = { event: true, deadline: true, weekly: true, monthly: true };
+let sortMethod = 'importance';
 let activeCat = '全部';
 let editingId = null;
 let draftCat = '学习';
@@ -368,7 +370,7 @@ function disconnectSync() {
 // ---------- 渲染 ----------
 function render() { renderChips(); renderContent(); updateChrome(); }
 function updateChrome() {
-  const inFull = activeTab === 'done' || activeTab === 'calendar';
+  const inFull = activeTab === 'done' || activeTab === 'calendar' || activeTab === 'sort';
   const set = (el) => { if (el) el.style.display = inFull ? 'none' : ''; };
   set(document.getElementById('tabbar'));
   set(document.getElementById('cat-chips'));
@@ -421,6 +423,8 @@ function renderContent() {
       : emptyHTML('✅', '还没有彻底完成的任务');
   } else if (activeTab === 'calendar') {
     html = renderCalendar();
+  } else if (activeTab === 'sort') {
+    html = renderSortView();
   }
   el.innerHTML = html;
 }
@@ -800,7 +804,80 @@ function renderMissBody() {
   el.innerHTML = any ? html : '<div class="empty"><span class="big">🎉</span>没有漏打卡,真棒</div>';
 }
 
-function openSort() { alertBox('排序功能下一步做哦,先看看新的标签栏'); }
+function openSort() { renderSortPanel(); document.getElementById('sort-overlay').hidden = false; }
+function renderSortPanel() {
+  const el = document.getElementById('sort-body');
+  el.innerHTML = `
+    <div class="field"><span>参与排序的任务</span>
+      <label class="miss-day"><input type="checkbox" data-sg="event" ${sortGroups.event ? 'checked' : ''}/> 当天事件(备忘录)</label>
+      <label class="miss-day"><input type="checkbox" data-sg="deadline" ${sortGroups.deadline ? 'checked' : ''}/> 截止任务</label>
+      <label class="miss-day"><input type="checkbox" data-sg="weekly" ${sortGroups.weekly ? 'checked' : ''}/> 每周</label>
+      <label class="miss-day"><input type="checkbox" data-sg="monthly" ${sortGroups.monthly ? 'checked' : ''}/> 每月</label>
+    </div>
+    <div class="field"><span>排序方式</span>
+      <div class="seg" id="sort-method">
+        <button data-method="importance" class="${sortMethod === 'importance' ? 'active' : ''}">按重要性</button>
+        <button data-method="deadline" class="${sortMethod === 'deadline' ? 'active' : ''}">按截止日期</button>
+      </div>
+    </div>`;
+}
+document.getElementById('sort-close').addEventListener('click', () => { document.getElementById('sort-overlay').hidden = true; });
+document.getElementById('sort-overlay').addEventListener('click', (e) => { if (e.target === document.getElementById('sort-overlay')) document.getElementById('sort-overlay').hidden = true; });
+document.getElementById('sort-toggle-all').addEventListener('click', () => {
+  const all = Object.values(sortGroups).every(Boolean);
+  sortGroups = { event: !all, deadline: !all, weekly: !all, monthly: !all };
+  renderSortPanel();
+});
+document.getElementById('sort-body').addEventListener('change', (e) => {
+  const c = e.target.closest('[data-sg]'); if (!c) return;
+  sortGroups[c.dataset.sg] = c.checked;
+});
+document.getElementById('sort-body').addEventListener('click', (e) => {
+  const b = e.target.closest('#sort-method button'); if (!b) return;
+  sortMethod = b.dataset.method;
+  renderSortPanel();
+});
+document.getElementById('sort-apply').addEventListener('click', () => {
+  document.getElementById('sort-overlay').hidden = true;
+  prevTab = activeTab;
+  activeTab = 'sort';
+  render();
+});
+
+function deadlineKey(plan) {
+  if (plan.period === 'once') return plan.due || '9999-12-31';
+  if (plan.period === 'weekly') {
+    const d = new Date();
+    d.setDate(d.getDate() + ((7 - d.getDay()) % 7));
+    return dateStr(d);
+  }
+  if (plan.period === 'monthly') {
+    const d = new Date();
+    return dateStr(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+  }
+  return '9999-12-31';
+}
+function sortPlans() {
+  const catOk = p => activeCat === '全部' || p.category === activeCat;
+  const list = [];
+  if (sortGroups.event) list.push(...plans.filter(p => p.period === 'once' && p.onceType === 'event' && !isFullyDone(p) && catOk(p)));
+  if (sortGroups.deadline) list.push(...plans.filter(p => p.period === 'once' && p.onceType !== 'event' && !isFullyDone(p) && catOk(p)));
+  if (sortGroups.weekly) list.push(...plans.filter(p => p.period === 'weekly' && !isFullyDone(p) && catOk(p)));
+  if (sortGroups.monthly) list.push(...plans.filter(p => p.period === 'monthly' && !isFullyDone(p) && catOk(p)));
+  if (sortMethod === 'importance') {
+    list.sort((a, b) => (b.importance || 5) - (a.importance || 5));
+  } else {
+    list.sort((a, b) => deadlineKey(a).localeCompare(deadlineKey(b)));
+  }
+  return list;
+}
+function renderSortView() {
+  const list = sortPlans();
+  let html = `<div class="done-head"><button class="back-btn" data-action="back">← 返回</button><span>排序结果</span></div>`;
+  html += `<div class="sort-desc">${sortMethod === 'importance' ? '按重要性从高到低' : '按截止日期从近到远'}</div>`;
+  html += list.length ? list.map(cardHTML).join('') : `<div class="empty">没有符合条件的任务</div>`;
+  return html;
+}
 
 // ---------- 问候语 / 启动 ----------
 function greet() {
