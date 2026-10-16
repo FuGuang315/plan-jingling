@@ -637,7 +637,14 @@ content.addEventListener('click', (e) => {
     commit(); renderContent();
   } else if (action === 'done') {
     const st = curState(plan);
-    st.manual = (shown(plan, st) >= 100) ? 0 : 100;
+    const done = shown(plan, st) >= 100;
+    if (plan.subtasks.length) {
+      // 有子任务:完成=全部打勾,取消完成=全部取消勾(百分比归0)
+      plan.subtasks.forEach((s, i) => { st.checked[i] = !done; });
+      st.manual = null;
+    } else {
+      st.manual = done ? 0 : 100;
+    }
     commit(); renderContent();
   } else if (action === 'edit' || action === 'del') {
     handlePlanAction(action, id);
