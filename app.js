@@ -24,6 +24,7 @@ const PERIOD_LABEL = { once: '单次', daily: '每天', weekly: '每周', monthl
 let plans = load(LS_PLANS, []);
 let progress = load(LS_PROGRESS, {});
 let activeTab = 'today';
+let prevTab = 'today';
 let activeCat = '全部';
 let editingId = null;
 let draftCat = '学习';
@@ -300,6 +301,17 @@ function renderContent() {
   } else if (activeTab === 'month') {
     const list = plans.filter(p => p.period === 'monthly' && catOk(p) && active(p));
     html = list.length ? sectionHTML('📆 本月目标', list) : emptyHTML('📆', '本月没有目标');
+  } else if (activeTab === 'done') {
+    const groups = [
+      ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && isFullyDone(p))],
+      ['单次', plans.filter(p => p.period === 'once' && catOk(p) && isFullyDone(p))],
+      ['每周', plans.filter(p => p.period === 'weekly' && catOk(p) && isFullyDone(p))],
+      ['每月', plans.filter(p => p.period === 'monthly' && catOk(p) && isFullyDone(p))],
+    ];
+    html += `<div class="done-head"><button class="back-btn" data-action="back">← 返回</button><span>已完成</span></div>`;
+    html += groups.some(g => g[1].length)
+      ? groups.map(([t, list]) => list.length ? `<div class="section-title">✅ ${t}</div>` + list.map(doneCardHTML).join('') : '').join('')
+      : emptyHTML('✅', '还没有彻底完成的任务');
   } else {
     const groups = [
       ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && active(p))],
@@ -311,19 +323,6 @@ function renderContent() {
     for (const [t, list] of groups) if (list.length) html += sectionHTML(t, list);
   }
   el.innerHTML = html;
-}
-
-function renderDoneBody() {
-  const el = document.getElementById('done-body');
-  const catOk = p => activeCat === '全部' || p.category === activeCat;
-  const groups = [
-    ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && isFullyDone(p))],
-    ['单次', plans.filter(p => p.period === 'once' && catOk(p) && isFullyDone(p))],
-    ['每周', plans.filter(p => p.period === 'weekly' && catOk(p) && isFullyDone(p))],
-    ['每月', plans.filter(p => p.period === 'monthly' && catOk(p) && isFullyDone(p))],
-  ];
-  if (!groups.some(g => g[1].length)) { el.innerHTML = '<div class="empty"><span class="big">✅</span>还没有彻底完成的任务</div>'; return; }
-  el.innerHTML = groups.map(([t, list]) => list.length ? `<div class="section-title">✅ ${t}</div>` + list.map(doneCardHTML).join('') : '').join('');
 }
 
 function doneCardHTML(plan) {
@@ -445,9 +444,10 @@ content.addEventListener('input', (e) => {
 });
 content.addEventListener('click', (e) => {
   const b = e.target.closest('[data-action]'); if (!b) return;
+  const action = b.dataset.action;
+  if (action === 'back') { activeTab = prevTab; renderContent(); return; }
   const id = b.dataset.id;
   const plan = plans.find(p => p.id === id); if (!plan) return;
-  const action = b.dataset.action;
 
   if (action === 'check') {
     const st = curState(plan);
@@ -585,11 +585,10 @@ document.getElementById('menu-sync').addEventListener('click', () => {
 });
 document.getElementById('menu-done').addEventListener('click', () => {
   document.getElementById('whale-overlay').hidden = true;
-  renderDoneBody();
-  document.getElementById('done-overlay').hidden = false;
+  prevTab = activeTab;
+  activeTab = 'done';
+  renderContent();
 });
-document.getElementById('done-close').addEventListener('click', () => { document.getElementById('done-overlay').hidden = true; });
-document.getElementById('done-overlay').addEventListener('click', (e) => { if (e.target === document.getElementById('done-overlay')) document.getElementById('done-overlay').hidden = true; });
 
 function handlePlanAction(action, id) {
   const plan = plans.find(p => p.id === id); if (!plan) return;
@@ -599,15 +598,11 @@ function handlePlanAction(action, id) {
       if (ok) {
         plans = plans.filter(p => p.id !== id);
         delete progress[id];
-        commit(); render(); renderDoneBody();
+        commit(); render();
       }
     });
   }
 }
-document.getElementById('done-body').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-action]'); if (!b) return;
-  handlePlanAction(b.dataset.action, b.dataset.id);
-});
 
 // ---------- 问候语 / 启动 ----------
 function greet() {
