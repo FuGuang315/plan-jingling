@@ -141,6 +141,39 @@ function streakOf(plan) {
   while (isDayDone(plan, d)) { n++; d.setDate(d.getDate() - 1); }
   return n;
 }
+function missedDays(plan, lookback = 7) {
+  const out = [];
+  const wd = '日一二三四五六';
+  const today = new Date();
+  for (let i = 1; i <= lookback; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const ds = dateStr(d);
+    if (plan.startDate && ds < plan.startDate) continue;
+    if (plan.endDate && ds > plan.endDate) continue;
+    if (!isDayDone(plan, d)) out.push({ date: ds, label: '周' + wd[d.getDay()] + ' ' + (d.getMonth() + 1) + '月' + d.getDate() + '日' });
+  }
+  return out;
+}
+function missSummary() {
+  const daily = plans.filter(p => p.period === 'daily' && !isFullyDone(p));
+  let total = 0, maxCon = 0;
+  const today = new Date();
+  for (const p of daily) {
+    total += missedDays(p, 7).length;
+    let con = 0;
+    for (let i = 1; i <= 7; i++) {
+      const d = new Date(today); d.setDate(d.getDate() - i);
+      const ds = dateStr(d);
+      if (p.endDate && ds > p.endDate) continue;
+      if (p.startDate && ds < p.startDate) break;
+      if (isDayDone(p, d)) break;
+      con++;
+    }
+    if (con > maxCon) maxCon = con;
+  }
+  return { count: total, maxCon };
+}
 
 // ---------- 云端同步 ----------
 function ghFetch(url, opts = {}) {
@@ -301,6 +334,11 @@ function renderContent() {
     const daily = plans.filter(p => p.period === 'daily' && catOk(p) && active(p));
     const once = plans.filter(p => p.period === 'once' && catOk(p) && shown(p, stateAt(p)) < 100);
     if (!daily.length && !once.length) { el.innerHTML = emptyHTML('🐳', '今天没有要做的,真棒'); return; }
+    const miss = missSummary();
+    if (miss.count > 0) {
+      const txt = miss.maxCon === 1 ? '昨天没打卡' : `已连续 ${miss.maxCon} 天没打卡`;
+      html += `<div class="card miss-banner" data-action="miss"><span>⚠️</span><div>${txt}<small>点我补卡</small></div></div>`;
+    }
     if (daily.length) html += sectionHTML('🌤️ 每天打卡', daily);
     if (once.length) html += sectionHTML('📌 待办', once);
   } else if (activeTab === 'week') {
@@ -454,6 +492,7 @@ content.addEventListener('click', (e) => {
   const b = e.target.closest('[data-action]'); if (!b) return;
   const action = b.dataset.action;
   if (action === 'back') { activeTab = prevTab; render(); return; }
+  if (action === 'miss') { openMiss(); return; }
   const id = b.dataset.id;
   const plan = plans.find(p => p.id === id); if (!plan) return;
 
@@ -610,6 +649,40 @@ function handlePlanAction(action, id) {
       }
     });
   }
+}
+
+// 补卡
+document.getElementById('miss-close').addEventListener('click', () => { document.getElementById('miss-overlay').hidden = true; });
+document.getElementById('miss-overlay').addEventListener('click', (e) => { if (e.target === document.getElementById('miss-overlay')) document.getElementById('miss-overlay').hidden = true; });
+document.getElementById('miss-save').addEventListener('click', () => {
+  let n = 0;
+  document.querySelectorAll('#miss-body input[type=checkbox]:checked').forEach(cb => {
+    const pid = cb.dataset.id, date = cb.dataset.date;
+    if (!progress[pid]) progress[pid] = {};
+    progress[pid][date] = { doneAt: new Date().toISOString(), checked: [], manual: null };
+    n++;
+  });
+  if (n === 0) { alertBox('没勾选任何天哦'); return; }
+  commit(); render();
+  document.getElementById('miss-overlay').hidden = true;
+});
+
+function openMiss() { renderMissBody(); document.getElementById('miss-overlay').hidden = false; }
+function renderMissBody() {
+  const el = document.getElementById('miss-body');
+  const daily = plans.filter(p => p.period === 'daily' && !isFullyDone(p));
+  let html = '';
+  let any = false;
+  for (const p of daily) {
+    const days = missedDays(p, 7);
+    if (!days.length) continue;
+    any = true;
+    html += `<div class="miss-habit">${esc(p.title)}</div>`;
+    for (const d of days) {
+      html += `<label class="miss-day"><input type="checkbox" data-id="${p.id}" data-date="${d.date}"/>${esc(d.label)}</label>`;
+    }
+  }
+  el.innerHTML = any ? html : '<div class="empty"><span class="big">🎉</span>没有漏打卡,真棒</div>';
 }
 
 // ---------- 问候语 / 启动 ----------
