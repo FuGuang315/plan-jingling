@@ -84,6 +84,23 @@ function b64decode(b64) {
   return new TextDecoder().decode(bytes);
 }
 
+// ---------- 通用弹窗(替代原生 confirm/alert,不乱码、更好看) ----------
+function showDialog(msg, opts = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('dialog-overlay');
+    const ok = document.getElementById('dialog-ok');
+    const cancel = document.getElementById('dialog-cancel');
+    document.getElementById('dialog-msg').textContent = msg;
+    ok.textContent = opts.okText || '确定';
+    cancel.textContent = opts.cancelText || '取消';
+    cancel.style.display = opts.hideCancel ? 'none' : '';
+    overlay.hidden = false;
+    ok.onclick = () => { overlay.hidden = true; resolve(true); };
+    cancel.onclick = () => { overlay.hidden = true; resolve(false); };
+  });
+}
+function alertBox(msg) { return showDialog(msg, { hideCancel: true }); }
+
 // ---------- 状态读取 ----------
 function stateAt(plan, d = new Date()) {
   const st = progress[plan.id];
@@ -233,20 +250,22 @@ function renderSyncBody() {
 }
 function connectSync() {
   const v = document.getElementById('sync-token-input').value.trim();
-  if (!v) { alert('请粘贴令牌'); return; }
+  if (!v) { alertBox('请粘贴令牌'); return; }
   syncToken = v;
   localStorage.setItem(LS_TOKEN, v);
   remoteSha = null;
   syncFromRemote();
 }
 function disconnectSync() {
-  if (!confirm('断开同步?本地数据会保留,只是不再上传云端。')) return;
-  syncToken = null;
-  remoteSha = null;
-  clearTimeout(pushTimer);
-  localStorage.removeItem(LS_TOKEN);
-  setSyncState('off');
-  renderSyncBody();
+  showDialog('断开同步?本地数据会保留,只是不再上传云端。', { okText: '断开' }).then(ok => {
+    if (!ok) return;
+    syncToken = null;
+    remoteSha = null;
+    clearTimeout(pushTimer);
+    localStorage.removeItem(LS_TOKEN);
+    setSyncState('off');
+    renderSyncBody();
+  });
 }
 
 // ---------- 渲染 ----------
@@ -300,10 +319,13 @@ function cardHTML(plan) {
   const pct = shown(plan, st);
   const done = pct >= 100;
   const color = CAT_COLORS[plan.category] || CAT_COLORS['其他'];
+  const imp = plan.importance || 5;
+  const impColor = imp >= 8 ? '#FF5D7A' : (imp >= 5 ? '#FF9A3D' : '#A0A8C0');
   let html = `<div class="card" data-id="${plan.id}">
     <div class="card-top">
       <span class="tag" style="background:${color}">${esc(plan.category)}</span>
       <div class="card-title ${done ? 'done' : ''}">${esc(plan.title)}</div>
+      <span class="imp" style="color:${impColor}">★${imp}</span>
       <span class="badge">${PERIOD_LABEL[plan.period]}</span>
     </div>`;
   if (plan.period === 'once' && plan.due) html += `<p class="card-note">⏰ 截止 ${esc(plan.due)}</p>`;
@@ -318,7 +340,7 @@ function cardHTML(plan) {
     html += `</div>`;
   }
 
-  html += `<div class="progress-row"><div class="bar"><i style="width:${pct}%"></i></div><span class="pct">${pct}%</span></div>`;
+  html += `<div class="progress-row"><div class="bar"><i style="width:${pct}%"></i></div><input class="pct" type="number" min="0" max="100" value="${pct}" data-action="pct" data-id="${plan.id}"/></div>`;
 
   if (plan.period === 'daily' && !plan.subtasks.length) {
     const doneToday = !!(st && st.doneAt);
@@ -346,25 +368,39 @@ function cardHTML(plan) {
 const content = document.getElementById('content');
 content.addEventListener('change', (e) => {
   const t = e.target;
-  if (t.dataset.action !== 'sub') return;
-  const plan = plans.find(p => p.id === t.dataset.id); if (!plan) return;
-  const st = curState(plan);
-  st.checked[+t.dataset.i] = t.checked;
-  st.manual = null;
-  commit();
-  renderContent();
+  const action = t.dataset.action;
+  if (action === 'sub') {
+    const plan = plans.find(p => p.id === t.dataset.id); if (!plan) return;
+    const st = curState(plan);
+    st.checked[+t.dataset.i] = t.checked;
+    st.manual = null;
+    commit();
+    renderContent();
+  } else if (action === 'slide' || action === 'pct') {
+    const plan = plans.find(p => p.id === t.dataset.id); if (!plan) return;
+    const v = Math.max(0, Math.min(100, +t.value || 0));
+    if (v >= 100) {
+      showDialog('进度到 100% 了,标记为「已完成」?', { okText: '完成', cancelText: '先不' }).then(ok => {
+        const st = curState(plan);
+        st.manual = ok ? 100 : 99;
+        commit(); renderContent();
+      });
+    } else {
+      const st = curState(plan);
+      st.manual = v; commit(); renderContent();
+    }
+  }
 });
 content.addEventListener('input', (e) => {
   const t = e.target;
-  if (t.dataset.action !== 'slide') return;
-  const plan = plans.find(p => p.id === t.dataset.id); if (!plan) return;
-  const st = curState(plan);
-  st.manual = +t.value;
-  commit();
-  const card = t.closest('.card');
-  card.querySelector('.pct').textContent = t.value + '%';
-  card.querySelector('.bar i').style.width = t.value + '%';
-  card.querySelector('.card-title').classList.toggle('done', +t.value >= 100);
+  const action = t.dataset.action;
+  if (action !== 'slide' && action !== 'pct') return;
+  const card = t.closest('.card'); if (!card) return;
+  const v = Math.max(0, Math.min(100, +t.value || 0));
+  card.querySelector('.bar i').style.width = v + '%';
+  card.querySelector('.card-title').classList.toggle('done', v >= 100);
+  const other = card.querySelector(action === 'slide' ? '.pct' : '.slider-row input[type=range]');
+  if (other) other.value = v;
 });
 content.addEventListener('click', (e) => {
   const b = e.target.closest('[data-action]'); if (!b) return;
@@ -384,11 +420,13 @@ content.addEventListener('click', (e) => {
   } else if (action === 'edit') {
     openSheet(id);
   } else if (action === 'del') {
-    if (confirm('删除「' + plan.title + '」?')) {
-      plans = plans.filter(p => p.id !== id);
-      delete progress[id];
-      commit(); render();
-    }
+    showDialog('删除「' + plan.title + '」?', { okText: '删除' }).then(ok => {
+      if (ok) {
+        plans = plans.filter(p => p.id !== id);
+        delete progress[id];
+        commit(); render();
+      }
+    });
   }
 });
 
@@ -420,6 +458,7 @@ function openSheet(id) {
   document.getElementById('f-title').value = plan ? plan.title : '';
   document.getElementById('f-note').value = plan ? (plan.note || '') : '';
   document.getElementById('f-due').value = (plan && plan.due) ? plan.due : '';
+  document.getElementById('f-imp').value = plan ? (plan.importance || 5) : 5;
   draftCat = plan ? plan.category : '学习';
   draftPeriod = plan ? plan.period : 'daily';
   draftSubs = plan ? plan.subtasks.map(s => s.text) : [];
@@ -470,14 +509,15 @@ function saveSheet() {
   if (!title) { alert('标题不能为空哦'); return; }
   const note = document.getElementById('f-note').value.trim();
   const due = (draftPeriod === 'once') ? (document.getElementById('f-due').value || null) : null;
+  const importance = Math.max(1, Math.min(10, +document.getElementById('f-imp').value || 5));
   const subtasks = draftSubs.map(t => ({ id: uid(), text: t })).filter(s => s.text.trim());
 
   if (editingId) {
     const plan = plans.find(p => p.id === editingId);
-    Object.assign(plan, { title, category: draftCat, period: draftPeriod, note, due, subtasks });
+    Object.assign(plan, { title, category: draftCat, period: draftPeriod, note, due, importance, subtasks });
     reconcile(plan);
   } else {
-    plans.push({ id: uid(), title, category: draftCat, period: draftPeriod, note, due, subtasks, createdAt: Date.now() });
+    plans.push({ id: uid(), title, category: draftCat, period: draftPeriod, note, due, importance, subtasks, createdAt: Date.now() });
   }
   commit(); render(); closeSheet();
 }
