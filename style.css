@@ -101,6 +101,7 @@ body {
 .cal-day.sel .dot { background: #fff; }
 .cal-detail { margin-top: 16px; }
 .cal-detail-title { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+.sort-desc { font-size: 12px; color: var(--ink-soft); margin: -4px 4px 10px; }
 .sync-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.7; margin: 4px 0 14px; }
 .sync-status { font-size: 14px; font-weight: 600; padding: 11px 13px; border-radius: 12px; background: var(--bg1); color: var(--ink); margin-bottom: 4px; }
 .sync-status.synced { color: var(--blue-deep); }
