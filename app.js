@@ -243,6 +243,28 @@ function tasksOnDay(ds) {
     return (p.period === 'weekly' || p.period === 'monthly') && !isFullyDone(p);
   });
 }
+function completedOnDay(plan, ds) {
+  const d = new Date(ds + 'T00:00:00');
+  if (plan.period === 'daily') return isDayDone(plan, d);
+  if (plan.period === 'once') return isFullyDone(plan) && plan.due === ds;
+  if (plan.period === 'weekly') return isFullyDone(plan) && d.getDay() === 0;
+  if (plan.period === 'monthly') return isFullyDone(plan) && d.getDate() === new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  return false;
+}
+function completedTypesOnDay(ds) {
+  const types = new Set();
+  for (const p of plans) {
+    if (!completedOnDay(p, ds)) continue;
+    if (p.period === 'daily') types.add('daily');
+    else if (p.period === 'once') types.add('once');
+    else if (p.period === 'weekly') types.add('weekly');
+    else if (p.period === 'monthly') types.add('monthly');
+  }
+  return types;
+}
+function completedTasksOnDay(ds) {
+  return plans.filter(p => completedOnDay(p, ds));
+}
 
 // ---------- 云端同步 ----------
 function ghFetch(url, opts = {}) {
@@ -420,16 +442,7 @@ function renderContent() {
     const list = plans.filter(p => p.period === 'monthly' && catOk(p) && active(p));
     html = list.length ? sectionHTML('📆 本月目标', list) : emptyHTML('📆', '本月没有目标');
   } else if (activeTab === 'done') {
-    const groups = [
-      ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && isFullyDone(p))],
-      ['单次', plans.filter(p => p.period === 'once' && catOk(p) && isFullyDone(p))],
-      ['每周', plans.filter(p => p.period === 'weekly' && catOk(p) && isFullyDone(p))],
-      ['每月', plans.filter(p => p.period === 'monthly' && catOk(p) && isFullyDone(p))],
-    ];
-    html += `<div class="done-head"><button class="back-btn" data-action="back">← 返回</button><span>已完成</span></div>`;
-    html += groups.some(g => g[1].length)
-      ? groups.map(([t, list]) => list.length ? `<div class="section-title">✅ ${t}</div>` + list.map(doneCardHTML).join('') : '').join('')
-      : emptyHTML('✅', '还没有彻底完成的任务');
+    html = renderDoneView();
   } else if (activeTab === 'calendar') {
     html = renderCalendar();
   } else if (activeTab === 'sort') {
@@ -458,14 +471,13 @@ function doneCardHTML(plan) {
   </div>`;
 }
 
-function renderCalendar() {
+function calHTML(completed) {
   const today = dateStr(new Date());
   const y = calYear, m = calMonth;
   const wd = '日一二三四五六';
   const sd = new Date(calSel + 'T00:00:00');
   const selLabel = `${sd.getMonth() + 1}月${sd.getDate()}日 周${wd[sd.getDay()]}`;
-  let html = `<div class="done-head"><button class="back-btn" data-action="back">← 返回</button><span>日历</span></div>`;
-  html += `<div class="cal-head"><button class="cal-nav" data-action="cal-prev">‹</button><span>${y}年${m + 1}月</span><button class="cal-nav" data-action="cal-next">›</button></div>`;
+  let html = `<div class="cal-head"><button class="cal-nav" data-action="cal-prev">‹</button><span>${y}年${m + 1}月</span><button class="cal-nav" data-action="cal-next">›</button></div>`;
   html += `<div class="cal-week">${['日', '一', '二', '三', '四', '五', '六'].map(w => `<span>${w}</span>`).join('')}</div>`;
   const firstDow = new Date(y, m, 1).getDay();
   const daysInMonth = new Date(y, m + 1, 0).getDate();
@@ -473,15 +485,34 @@ function renderCalendar() {
   for (let i = 0; i < firstDow; i++) html += `<div class="cal-day empty"></div>`;
   for (let d = 1; d <= daysInMonth; d++) {
     const ds = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    const types = [...dotTypesOnDay(ds)];
+    const types = completed ? [...completedTypesOnDay(ds)] : [...dotTypesOnDay(ds)];
     const dots = types.length ? `<div class="cal-dots">${types.map(t => `<i class="dot ${t}"></i>`).join('')}</div>` : '';
     html += `<div class="cal-day ${ds === today ? 'today' : ''} ${ds === calSel ? 'sel' : ''}" data-action="cal-day" data-date="${ds}">${d}${dots}</div>`;
   }
   html += `</div>`;
-  const selTasks = tasksOnDay(calSel);
+  const selTasks = completed ? completedTasksOnDay(calSel) : tasksOnDay(calSel);
   html += `<div class="cal-detail"><div class="cal-detail-title">${selLabel}</div>`;
-  html += selTasks.length ? selTasks.map(cardHTML).join('') : `<div class="empty">这天没有任务</div>`;
+  html += selTasks.length ? selTasks.map(cardHTML).join('') : `<div class="empty">这天没有${completed ? '已完成' : ''}任务</div>`;
   html += `</div>`;
+  return html;
+}
+function renderCalendar() {
+  return `<div class="done-head"><button class="back-btn" data-action="back">← 返回</button><span>日历</span></div>` + calHTML(false);
+}
+function renderDoneView() {
+  const catOk = p => activeCat === '全部' || p.category === activeCat;
+  const groups = [
+    ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && isFullyDone(p))],
+    ['单次', plans.filter(p => p.period === 'once' && catOk(p) && isFullyDone(p))],
+    ['每周', plans.filter(p => p.period === 'weekly' && catOk(p) && isFullyDone(p))],
+    ['每月', plans.filter(p => p.period === 'monthly' && catOk(p) && isFullyDone(p))],
+  ];
+  let html = `<div class="done-head"><button class="back-btn" data-action="back">← 返回</button><span>已完成</span></div>`;
+  html += calHTML(true);
+  html += `<div class="section-title" style="margin-top:16px">✅ 全部已完成</div>`;
+  html += groups.some(g => g[1].length)
+    ? groups.map(([t, list]) => list.length ? `<div class="section-title">✅ ${t}</div>` + list.map(doneCardHTML).join('') : '').join('')
+    : `<div class="empty">还没有彻底完成的任务</div>`;
   return html;
 }
 
