@@ -81,6 +81,11 @@
       </label>
 
       <div class="field">
+        <span>重要度（1-10，默认 5）</span>
+        <input id="f-imp" type="number" min="1" max="10" value="5" />
+      </div>
+
+      <div class="field">
         <span>子任务（可选）</span>
         <div id="f-sub-list"></div>
         <div class="sub-add">
@@ -103,6 +108,17 @@
         <button class="icon-btn" id="sync-close">✕</button>
       </div>
       <div id="sync-body"></div>
+    </div>
+  </div>
+
+  <!-- 通用确认弹窗 -->
+  <div class="overlay" id="dialog-overlay" hidden>
+    <div class="sheet dialog-sheet">
+      <p class="dialog-msg" id="dialog-msg"></p>
+      <div class="sheet-actions">
+        <button class="btn ghost" id="dialog-cancel">取消</button>
+        <button class="btn primary" id="dialog-ok">确定</button>
+      </div>
     </div>
   </div>
 
