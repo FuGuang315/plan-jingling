@@ -96,6 +96,8 @@ body {
 .dot { width: 5px; height: 5px; border-radius: 50%; }
 .dot.daily { background: var(--blue); }
 .dot.once { background: var(--pink); }
+.dot.weekly { background: #4ED4A8; }
+.dot.monthly { background: #FF9A3D; }
 .cal-day.sel .dot { background: #fff; }
 .cal-detail { margin-top: 16px; }
 .cal-detail-title { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
