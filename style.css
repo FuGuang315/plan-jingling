@@ -75,6 +75,13 @@ body {
 .done-head { display: flex; align-items: center; gap: 12px; padding: 16px 4px 12px; }
 .done-head .back-btn { border: 0; background: var(--card); border-radius: 12px; padding: 9px 16px; font-size: 15px; cursor: pointer; color: var(--blue-deep); box-shadow: var(--shadow); }
 .done-head span { font-size: 17px; font-weight: 700; }
+.miss-banner { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.miss-banner span { font-size: 20px; }
+.miss-banner div { font-size: 14px; font-weight: 600; }
+.miss-banner small { display: block; font-size: 12px; color: var(--ink-soft); font-weight: 400; }
+.miss-habit { font-size: 14px; font-weight: 700; margin: 12px 0 6px; }
+.miss-day { display: flex; align-items: center; gap: 8px; padding: 9px 2px; font-size: 14px; }
+.miss-day input { width: 18px; height: 18px; accent-color: var(--blue); }
 .sync-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.7; margin: 4px 0 14px; }
 .sync-status { font-size: 14px; font-weight: 600; padding: 11px 13px; border-radius: 12px; background: var(--bg1); color: var(--ink); margin-bottom: 4px; }
 .sync-status.synced { color: var(--blue-deep); }
