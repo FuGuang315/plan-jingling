@@ -25,9 +25,11 @@ let plans = load(LS_PLANS, []);
 let progress = load(LS_PROGRESS, {});
 let activeTab = 'today';
 let prevTab = 'today';
+let fullScreenTab = null;
 let calYear = new Date().getFullYear();
 let calMonth = new Date().getMonth();
 let calSel = dateStr(new Date());
+let calMode = 'active';
 let sortGroups = { event: true, deadline: true, weekly: true, monthly: true };
 let sortMethod = 'importance';
 let activeCat = '全部';
@@ -265,6 +267,17 @@ function completedTypesOnDay(ds) {
 function completedTasksOnDay(ds) {
   return plans.filter(p => completedOnDay(p, ds));
 }
+function allTypesOnDay(ds) {
+  const s = new Set(dotTypesOnDay(ds));
+  for (const t of completedTypesOnDay(ds)) s.add(t);
+  return s;
+}
+function allTasksOnDay(ds) {
+  const map = new Map();
+  for (const p of tasksOnDay(ds)) map.set(p.id, p);
+  for (const p of completedTasksOnDay(ds)) map.set(p.id, p);
+  return [...map.values()];
+}
 
 // ---------- 云端同步 ----------
 function ghFetch(url, opts = {}) {
@@ -401,7 +414,7 @@ function disconnectSync() {
 // ---------- 渲染 ----------
 function render() { renderChips(); renderContent(); updateChrome(); }
 function updateChrome() {
-  const inFull = activeTab === 'done' || activeTab === 'calendar' || activeTab === 'sort';
+  const inFull = activeTab === 'calendar' || activeTab === 'sort';
   const set = (el) => { if (el) el.style.display = inFull ? 'none' : ''; };
   set(document.getElementById('tabbar'));
   set(document.getElementById('cat-chips'));
@@ -441,8 +454,6 @@ function renderContent() {
   } else if (activeTab === 'month') {
     const list = plans.filter(p => p.period === 'monthly' && catOk(p) && active(p));
     html = list.length ? sectionHTML('📆 本月目标', list) : emptyHTML('📆', '本月没有目标');
-  } else if (activeTab === 'done') {
-    html = renderDoneView();
   } else if (activeTab === 'calendar') {
     html = renderCalendar();
   } else if (activeTab === 'sort') {
@@ -471,7 +482,7 @@ function doneCardHTML(plan) {
   </div>`;
 }
 
-function calHTML(completed) {
+function calHTML(mode) {
   const today = dateStr(new Date());
   const y = calYear, m = calMonth;
   const wd = '日一二三四五六';
@@ -485,34 +496,38 @@ function calHTML(completed) {
   for (let i = 0; i < firstDow; i++) html += `<div class="cal-day empty"></div>`;
   for (let d = 1; d <= daysInMonth; d++) {
     const ds = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    const types = completed ? [...completedTypesOnDay(ds)] : [...dotTypesOnDay(ds)];
+    const types = mode === 'active' ? [...dotTypesOnDay(ds)] : mode === 'done' ? [...completedTypesOnDay(ds)] : [...allTypesOnDay(ds)];
     const dots = types.length ? `<div class="cal-dots">${types.map(t => `<i class="dot ${t}"></i>`).join('')}</div>` : '';
     html += `<div class="cal-day ${ds === today ? 'today' : ''} ${ds === calSel ? 'sel' : ''}" data-action="cal-day" data-date="${ds}">${d}${dots}</div>`;
   }
   html += `</div>`;
-  const selTasks = completed ? completedTasksOnDay(calSel) : tasksOnDay(calSel);
+  const selTasks = mode === 'active' ? tasksOnDay(calSel) : mode === 'done' ? completedTasksOnDay(calSel) : allTasksOnDay(calSel);
   html += `<div class="cal-detail"><div class="cal-detail-title">${selLabel}</div>`;
-  html += selTasks.length ? selTasks.map(cardHTML).join('') : `<div class="empty">这天没有${completed ? '已完成' : ''}任务</div>`;
+  html += selTasks.length ? selTasks.map(cardHTML).join('') : `<div class="empty">这天没有任务</div>`;
   html += `</div>`;
   return html;
 }
 function renderCalendar() {
-  return `<div class="done-head"><button class="back-btn" data-action="back">← 返回</button><span>日历</span></div>` + calHTML(false);
-}
-function renderDoneView() {
-  const catOk = p => activeCat === '全部' || p.category === activeCat;
-  const groups = [
-    ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && isFullyDone(p))],
-    ['单次', plans.filter(p => p.period === 'once' && catOk(p) && isFullyDone(p))],
-    ['每周', plans.filter(p => p.period === 'weekly' && catOk(p) && isFullyDone(p))],
-    ['每月', plans.filter(p => p.period === 'monthly' && catOk(p) && isFullyDone(p))],
-  ];
-  let html = `<div class="done-head"><button class="back-btn" data-action="back">← 返回</button><span>已完成</span></div>`;
-  html += calHTML(true);
-  html += `<div class="section-title" style="margin-top:16px">✅ 全部已完成</div>`;
-  html += groups.some(g => g[1].length)
-    ? groups.map(([t, list]) => list.length ? `<div class="section-title">✅ ${t}</div>` + list.map(doneCardHTML).join('') : '').join('')
-    : `<div class="empty">还没有彻底完成的任务</div>`;
+  let html = `<div class="done-head"><button class="back-btn" data-action="back">← 返回</button><span>日历</span></div>`;
+  html += `<div class="seg cal-mode">
+    <button data-action="cal-mode" data-mode="active" class="${calMode === 'active' ? 'active' : ''}">未完成</button>
+    <button data-action="cal-mode" data-mode="done" class="${calMode === 'done' ? 'active' : ''}">已完成</button>
+    <button data-action="cal-mode" data-mode="all" class="${calMode === 'all' ? 'active' : ''}">全部</button>
+  </div>`;
+  html += calHTML(calMode);
+  if (calMode === 'done') {
+    const catOk = p => activeCat === '全部' || p.category === activeCat;
+    const groups = [
+      ['每天', plans.filter(p => p.period === 'daily' && catOk(p) && isFullyDone(p))],
+      ['单次', plans.filter(p => p.period === 'once' && catOk(p) && isFullyDone(p))],
+      ['每周', plans.filter(p => p.period === 'weekly' && catOk(p) && isFullyDone(p))],
+      ['每月', plans.filter(p => p.period === 'monthly' && catOk(p) && isFullyDone(p))],
+    ];
+    html += `<div class="section-title" style="margin-top:16px">✅ 全部已完成</div>`;
+    html += groups.some(g => g[1].length)
+      ? groups.map(([t, list]) => list.length ? `<div class="section-title">✅ ${t}</div>` + list.map(doneCardHTML).join('') : '').join('')
+      : `<div class="empty">还没有彻底完成的任务</div>`;
+  }
   return html;
 }
 
@@ -622,7 +637,8 @@ content.addEventListener('input', (e) => {
 content.addEventListener('click', (e) => {
   const b = e.target.closest('[data-action]'); if (!b) return;
   const action = b.dataset.action;
-  if (action === 'back') { activeTab = prevTab; render(); return; }
+  if (action === 'back') { if (fullScreenTab) history.back(); return; }
+  if (action === 'cal-mode') { calMode = b.dataset.mode; render(); return; }
   if (action === 'miss') { openMiss(); return; }
   if (action === 'cal-prev') { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } render(); return; }
   if (action === 'cal-next') { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } render(); return; }
@@ -789,20 +805,27 @@ document.getElementById('menu-sync').addEventListener('click', () => {
   document.getElementById('whale-overlay').hidden = true;
   openSync();
 });
-document.getElementById('menu-done').addEventListener('click', () => {
-  document.getElementById('whale-overlay').hidden = true;
-  prevTab = activeTab;
-  activeTab = 'done';
-  render();
-});
 document.getElementById('menu-cal').addEventListener('click', () => {
   document.getElementById('whale-overlay').hidden = true;
-  prevTab = activeTab;
   calYear = new Date().getFullYear();
   calMonth = new Date().getMonth();
   calSel = dateStr(new Date());
-  activeTab = 'calendar';
+  enterFull('calendar');
+});
+
+function enterFull(tab) {
+  prevTab = activeTab;
+  fullScreenTab = tab;
+  activeTab = tab;
+  history.pushState({ full: true }, '');
   render();
+}
+window.addEventListener('popstate', () => {
+  if (fullScreenTab) {
+    fullScreenTab = null;
+    activeTab = prevTab;
+    render();
+  }
 });
 
 function handlePlanAction(action, id) {
@@ -888,9 +911,7 @@ document.getElementById('sort-body').addEventListener('click', (e) => {
 });
 document.getElementById('sort-apply').addEventListener('click', () => {
   document.getElementById('sort-overlay').hidden = true;
-  prevTab = activeTab;
-  activeTab = 'sort';
-  render();
+  enterFull('sort');
 });
 
 function deadlineKey(plan) {
