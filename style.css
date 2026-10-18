@@ -107,6 +107,13 @@ body {
 .sync-status { font-size: 14px; font-weight: 600; padding: 11px 13px; border-radius: 12px; background: var(--bg1); color: var(--ink); margin-bottom: 4px; }
 .sync-status.synced { color: var(--blue-deep); }
 .sync-status.error { color: #FF7A93; }
+.topic-row { display: flex; align-items: center; gap: 8px; }
+.topic-row code {
+  flex: 1; font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 12px; word-break: break-all; line-height: 1.5;
+  background: #FBFBFE; border: 1.5px solid var(--line);
+  border-radius: 12px; padding: 10px 12px; color: var(--blue-deep);
+}
 
 /* ---------- 分类筛选 ---------- */
 .chips { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 12px; scrollbar-width: none; }
@@ -258,7 +265,7 @@ body {
 
 .field { display: block; margin-top: 14px; }
 .field > span { display: block; font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; }
-.field input[type=text], .field input[type=date], .field textarea {
+.field input[type=text], .field input[type=date], .field input[type=time], .field input[type=number], .field textarea {
   width: 100%; border: 1.5px solid var(--line); border-radius: 12px;
   padding: 11px 12px; font-size: 15px; color: var(--ink);
   font-family: inherit; background: #FBFBFE;
