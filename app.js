@@ -525,7 +525,6 @@ let dsKey = localStorage.getItem(LS_DS_KEY) || null;
 let chatHistory = [];
 let pendingAction = null;
 let chatBusy = false;
-let recognition = null;
 
 function clampInt(v, def, min, max) { v = parseInt(v, 10); return isNaN(v) ? def : Math.max(min, Math.min(max, v)); }
 function validTime(s) { return typeof s === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s); }
@@ -805,29 +804,306 @@ function renderChat() {
 function openChat() { const o = document.getElementById('chat-overlay'); o.hidden = false; renderChat(); setTimeout(() => { const i = document.getElementById('chat-input'); if (i) i.focus(); }, 80); }
 function closeChat() { document.getElementById('chat-overlay').hidden = true; }
 
-function startVoice(intoInputId) {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { alertBox('当前浏览器不支持语音输入,请打字'); return; }
-  if (recognition) { try { recognition.abort(); } catch (e) {} }
-  recognition = new SR();
-  recognition.lang = 'zh-CN';
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
-  recognition.onresult = (e) => { const text = e.results[0][0].transcript; const inp = document.getElementById(intoInputId); if (inp) inp.value = text; sendToAgent(text); };
-  recognition.onerror = () => { alertBox('语音识别失败(国内浏览器可能不支持),请打字。'); };
-  recognition.onend = () => { recognition = null; };
-  try { recognition.start(); } catch (e) { alertBox('语音启动失败,请打字'); }
+// ---------- 语音输入(讯飞「语音听写」iat)----------
+// 密钥只存在本机 localStorage,不写进源码(GitHub Pages 上源码是公开的)。
+// 流程:麦克风 → 16kHz 单声道 PCM → 每 40ms(1280 字节)一帧 base64 推进 WebSocket。
+const LS_XF = 'jql_xfyun_v1';
+const XF_HOST = 'iat-api.xfyun.cn';
+const XF_PATH = '/v2/iat';
+const XF_FRAME = 640;            // 640 个 Int16 = 1280 字节 = 40ms @ 16kHz
+const XF_MIN_SAMPLES = 3200;     // 少于 0.2 秒就当作误触
+
+let xfCfg = (() => { try { return JSON.parse(localStorage.getItem(LS_XF)) || {}; } catch (e) { return {}; } })();
+function xfReady() { return !!(xfCfg.appid && xfCfg.apikey && xfCfg.apisecret); }
+
+function bufToB64(buf) {
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+// 讯飞鉴权:signature_origin = "host: ...\ndate: ...\nGET /v2/iat HTTP/1.1"
+// signature = base64(HMAC-SHA256(签名原文, APISecret)),date 偏差不能超过 300 秒。
+async function xfAuthUrl() {
+  if (!window.crypto || !crypto.subtle) throw new Error('需要 https 打开才能录音');
+  const date = new Date().toUTCString();
+  const origin = 'host: ' + XF_HOST + '\ndate: ' + date + '\nGET ' + XF_PATH + ' HTTP/1.1';
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(xfCfg.apisecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(origin));
+  const authOrigin = 'api_key="' + xfCfg.apikey + '",algorithm="hmac-sha256",headers="host date request-line",signature="' + bufToB64(sig) + '"';
+  const auth = btoa(authOrigin);
+  return 'wss://' + XF_HOST + XF_PATH
+    + '?authorization=' + encodeURIComponent(auth)
+    + '&date=' + encodeURIComponent(date)
+    + '&host=' + encodeURIComponent(XF_HOST);
+}
+
+function toInt16(arr) {
+  const out = new Int16Array(arr.length);
+  for (let i = 0; i < arr.length; i++) {
+    const s = Math.max(-1, Math.min(1, arr[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return out;
+}
+
+// 有些浏览器锁死 48kHz,这里线性插值降到 16kHz(否则讯飞听起来是慢放)。
+function resampleTo16k(f, from) {
+  if (from === 16000) return f;
+  const ratio = from / 16000;
+  const n = Math.floor(f.length / ratio);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const p = i * ratio, i0 = Math.floor(p), i1 = Math.min(i0 + 1, f.length - 1), t = p - i0;
+    out[i] = f[i0] * (1 - t) + f[i1] * t;
+  }
+  return out;
+}
+
+// 建立一次识别会话。返回 { stop, abort }
+async function createIat(onText, onDone, onError, preCtx) {
+  const url = await xfAuthUrl();
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const AC = window.AudioContext || window.webkitAudioContext;
+  let ctx = preCtx || null;
+  if (!ctx) {
+    try { ctx = new AC({ sampleRate: 16000 }); } catch (e) { ctx = new AC(); }
+  }
+  if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (e) {} }
+
+  const inRate = ctx.sampleRate || 48000;
+  const src = ctx.createMediaStreamSource(stream);
+  const proc = ctx.createScriptProcessor(2048, 1, 1);
+  src.connect(proc);
+  proc.connect(ctx.destination);   // 不接 destination 回调不跑(输出是静音)
+
+  let ws = null, wsOpen = false, stopping = false, finished = false, firstSent = false;
+  let pending = [];                // 还没凑够一帧的采样
+  const queue = [];                // 待发送的 base64 音频帧
+  const results = {};              // sn → 文字片段
+  let lastText = '';
+  let totalSamples = 0;
+  let tick = null, closeTimer = null;
+
+  function render() {
+    const keys = Object.keys(results).map(Number).sort((a, b) => a - b);
+    const t = keys.map(k => results[k]).join('');
+    if (t !== lastText) { lastText = t; onText(t); }
+  }
+
+  function sendFrame(audio, status) {
+    if (!ws || ws.readyState !== 1) return;
+    const payload = { data: { status: status, format: 'audio/L16;rate=16000', encoding: 'raw', audio: audio } };
+    if (!firstSent) {
+      firstSent = true;
+      payload.common = { app_id: xfCfg.appid };
+      payload.business = { language: 'zh_cn', domain: 'iat', accent: 'mandarin', vad_eos: 10000, ptt: 1 };
+    }
+    ws.send(JSON.stringify(payload));
+  }
+
+  // 每 40ms 发一帧;落后了就一次多发几帧追回来,收尾时补 status:2 结束帧
+  function drain() {
+    if (!wsOpen) return;
+    const cap = queue.length > 6 ? 6 : 1;
+    for (let n = 0; n < cap && queue.length; n++) {
+      sendFrame(queue.shift(), firstSent ? 1 : 0);
+    }
+    if (!queue.length && stopping) { stopping = false; sendFrame('', 2); }
+  }
+
+  proc.onaudioprocess = (e) => {
+    if (stopping || finished) return;
+    const f = resampleTo16k(e.inputBuffer.getChannelData(0), inRate);
+    totalSamples += f.length;
+    for (let i = 0; i < f.length; i++) pending.push(f[i]);
+    while (pending.length >= XF_FRAME) {
+      queue.push(bufToB64(toInt16(pending.splice(0, XF_FRAME)).buffer));
+    }
+  };
+
+  function teardownMic() {
+    try { proc.onaudioprocess = null; } catch (e) {}
+    try { src.disconnect(); } catch (e) {}
+    try { proc.disconnect(); } catch (e) {}
+    try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    try { ctx.close(); } catch (e) {}
+  }
+
+  function cleanup() {
+    if (tick) { clearInterval(tick); tick = null; }
+    if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+    teardownMic();
+    try { if (ws && ws.readyState <= 1) ws.close(); } catch (e) {}
+    ws = null;
+  }
+
+  function finishOk() {
+    if (finished) return;
+    finished = true;
+    cleanup();
+    onDone(lastText || '');
+  }
+
+  function fail(msg) {
+    if (finished) return;
+    finished = true;
+    cleanup();
+    onError(new Error(msg || '识别失败'));
+  }
+
+  ws = new WebSocket(url);
+  ws.onopen = () => { wsOpen = true; tick = setInterval(drain, 40); };
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    if (msg.code !== 0) { fail(msg.message || ('讯飞错误码 ' + msg.code)); return; }
+    const d = msg.data || {};
+    if (d.result && d.result.ws) {
+      let piece = '';
+      for (const alt of d.result.ws) for (const cw of (alt.cw || [])) piece += cw.w;
+      if (d.result.sn) results[d.result.sn] = piece;
+      render();
+    }
+    if (d.status === 2) finishOk();
+  };
+  ws.onerror = () => fail('网络连接失败');
+  ws.onclose = () => { if (!finished) fail('连接被关闭'); };
+
+  return {
+    stop() {
+      if (finished || stopping) return;
+      if (totalSamples < XF_MIN_SAMPLES) { fail('说得太短了,按住多说两句'); return; }
+      teardownMic();
+      if (pending.length) {          // 剩余不足一帧的采样补零后发出去
+        while (pending.length < XF_FRAME) pending.push(0);
+        queue.push(bufToB64(toInt16(pending.slice(0, XF_FRAME)).buffer));
+        pending = [];
+      }
+      stopping = true;
+      drain();
+      closeTimer = setTimeout(() => finishOk(), 5000);   // 兜底:5 秒还没结束就别等了
+    },
+    abort() { fail('已取消'); }
+  };
+}
+
+let voiceCtl = null;
+let voiceStarting = false;
+let voiceReleaseEarly = false;
+
+async function startVoiceHold(inputId, btn) {
+  if (voiceCtl || voiceStarting) return;
+  if (!xfReady()) { openDsSettings(); return; }
+  voiceStarting = true;
+  voiceReleaseEarly = false;
+  const inp = document.getElementById(inputId);
+  const oldPh = inp ? inp.placeholder : null;
+  btn.classList.add('recording');
+  if (inp) inp.placeholder = '松开结束…';
+  // iOS 要求 AudioContext 在用户手势里同步创建,所以放在任何 await 之前
+  let preCtx = null;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    preCtx = new AC({ sampleRate: 16000 });
+    if (preCtx.state === 'suspended') { const p = preCtx.resume(); if (p && p.catch) p.catch(() => {}); }
+  } catch (e) { preCtx = null; }
+  try {
+    voiceCtl = await createIat(
+      (t) => { if (inp) inp.value = t; },
+      (t) => {
+        btn.classList.remove('recording');
+        if (inp) inp.placeholder = oldPh;
+        voiceCtl = null;
+        if (inp) inp.value = t;
+        if (t) sendFromInput(inp);
+      },
+      (e) => {
+        btn.classList.remove('recording');
+        if (inp) inp.placeholder = oldPh;
+        voiceCtl = null;
+        alertBox('语音识别失败:' + ((e && e.message) || '请重试') + '\n(打字照样能用)');
+      },
+      preCtx
+    );
+    voiceStarting = false;
+    if (voiceReleaseEarly) { voiceReleaseEarly = false; voiceCtl.stop(); }
+  } catch (e) {
+    voiceStarting = false;
+    btn.classList.remove('recording');
+    if (inp) inp.placeholder = oldPh;
+    try { if (preCtx) preCtx.close(); } catch (e2) {}
+    alertBox('录音启动失败:' + ((e && e.message) || '请检查麦克风权限'));
+  }
+}
+
+function stopVoiceHold() {
+  if (voiceCtl) voiceCtl.stop();
+  else if (voiceStarting) voiceReleaseEarly = true;
+}
+
+function bindMic(btnId, inputId) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  btn.addEventListener('pointerdown', (e) => { e.preventDefault(); startVoiceHold(inputId, btn); });
+  btn.addEventListener('pointerup', (e) => { e.preventDefault(); stopVoiceHold(); });
+  btn.addEventListener('pointercancel', stopVoiceHold);
+  btn.addEventListener('pointerleave', stopVoiceHold);
+  btn.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
 function openDsSettings() {
   const body = document.getElementById('ds-body');
+  let html = '';
   if (dsKey) {
-    body.innerHTML = '<p class="sync-desc">已设置 DeepSeek 密钥,鲸灵助手可以直接用了。</p><div class="sheet-actions"><button class="btn ghost" id="ds-clear">清除密钥</button></div>';
-    document.getElementById('ds-clear').onclick = () => { dsKey = null; localStorage.removeItem(LS_DS_KEY); openDsSettings(); };
+    html += '<p class="sync-desc">✅ DeepSeek 密钥已设置,鲸灵助手可以直接用了。</p>'
+      + '<div class="sheet-actions"><button class="btn ghost" id="ds-clear">清除 DeepSeek 密钥</button></div>';
   } else {
-    body.innerHTML = '<p class="sync-desc">填一个 DeepSeek 密钥,鲸灵助手就能听你指挥。<br>去 platform.deepseek.com 注册 → API Keys → 创建,复制 sk-... 到这里(只存本机浏览器)。</p><label class="field"><span>DeepSeek 密钥</span><input id="ds-key-input" type="text" placeholder="sk-..." autocomplete="off"/></label><div class="sheet-actions"><button class="btn primary" id="ds-save">保存</button></div>';
-    document.getElementById('ds-save').onclick = () => { const v = document.getElementById('ds-key-input').value.trim(); if (!v) { alertBox('请粘贴密钥'); return; } dsKey = v; localStorage.setItem(LS_DS_KEY, v); openDsSettings(); alertBox('已保存,可以开始用了'); };
+    html += '<p class="sync-desc">填一个 DeepSeek 密钥,鲸灵助手就能听你指挥。<br>去 platform.deepseek.com 注册 → API Keys → 创建,复制 sk-... 到这里(只存本机浏览器)。</p>'
+      + '<label class="field"><span>DeepSeek 密钥</span><input id="ds-key-input" type="text" placeholder="sk-..." autocomplete="off"/></label>'
+      + '<div class="sheet-actions"><button class="btn primary" id="ds-save">保存 DeepSeek 密钥</button></div>';
   }
+  html += '<hr class="setting-split"/>';
+  if (xfReady()) {
+    html += '<p class="sync-desc">✅ 讯飞语音已配置,按住 🎤 说话,松开发送。</p>'
+      + '<div class="sheet-actions"><button class="btn ghost" id="xf-clear">清除语音配置</button></div>';
+  } else {
+    html += '<p class="sync-desc">语音输入用讯飞的「语音听写」(每天免费 500 次)。<br>去 console.xfyun.cn → 我的应用 → 计划鲸灵 → 复制三个值填下面(只存本机浏览器)。</p>'
+      + '<label class="field"><span>APPID</span><input id="xf-appid" type="text" placeholder="例如 5bc4bfeb" autocomplete="off"/></label>'
+      + '<label class="field"><span>APIKey</span><input id="xf-apikey" type="text" autocomplete="off"/></label>'
+      + '<label class="field"><span>APISecret</span><input id="xf-apisecret" type="text" autocomplete="off"/></label>'
+      + '<div class="sheet-actions"><button class="btn primary" id="xf-save">保存语音配置</button></div>';
+  }
+  body.innerHTML = html;
+
+  const dsClear = document.getElementById('ds-clear');
+  if (dsClear) dsClear.onclick = () => { dsKey = null; localStorage.removeItem(LS_DS_KEY); openDsSettings(); };
+  const dsSave = document.getElementById('ds-save');
+  if (dsSave) dsSave.onclick = () => {
+    const v = document.getElementById('ds-key-input').value.trim();
+    if (!v) { alertBox('请粘贴密钥'); return; }
+    dsKey = v; localStorage.setItem(LS_DS_KEY, v); openDsSettings(); alertBox('已保存,可以开始用了');
+  };
+  const xfClear = document.getElementById('xf-clear');
+  if (xfClear) xfClear.onclick = () => {
+    xfCfg = {}; localStorage.removeItem(LS_XF); openDsSettings();
+  };
+  const xfSave = document.getElementById('xf-save');
+  if (xfSave) xfSave.onclick = () => {
+    const appid = document.getElementById('xf-appid').value.trim();
+    const apikey = document.getElementById('xf-apikey').value.trim();
+    const apisecret = document.getElementById('xf-apisecret').value.trim();
+    if (!appid || !apikey || !apisecret) { alertBox('三个值都要填'); return; }
+    xfCfg = { appid: appid, apikey: apikey, apisecret: apisecret };
+    localStorage.setItem(LS_XF, JSON.stringify(xfCfg));
+    openDsSettings();
+    alertBox('语音配置已保存,按住 🎤 试试');
+  };
+
   document.getElementById('ds-overlay').hidden = false;
 }
 
@@ -842,10 +1118,10 @@ function sendFromInput(inputEl) {
 // 事件绑定
 document.getElementById('assist-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendFromInput(e.target); } });
 document.getElementById('assist-send').addEventListener('click', () => sendFromInput(document.getElementById('assist-input')));
-document.getElementById('assist-mic').addEventListener('click', () => startVoice('assist-input'));
+bindMic('assist-mic', 'assist-input');
 document.getElementById('chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendFromInput(e.target); } });
 document.getElementById('chat-send').addEventListener('click', () => sendFromInput(document.getElementById('chat-input')));
-document.getElementById('chat-mic').addEventListener('click', () => startVoice('chat-input'));
+bindMic('chat-mic', 'chat-input');
 document.getElementById('chat-close').addEventListener('click', closeChat);
 document.getElementById('chat-overlay').addEventListener('click', (e) => { if (e.target === document.getElementById('chat-overlay')) closeChat(); });
 document.getElementById('chat-msgs').addEventListener('click', (e) => {
