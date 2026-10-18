@@ -39,8 +39,15 @@
       <button class="tab sort-btn" id="sort-btn"><span>↕️</span>排序</button>
     </nav>
 
-    <!-- 添加按钮 -->
-    <button class="fab" id="fab" title="新建计划">＋</button>
+    <!-- 底部输入条:加号 + 助手 -->
+    <div class="assist-bar" id="assist-bar">
+      <button class="fab" id="fab" title="新建计划">＋</button>
+      <div class="assist-input">
+        <input id="assist-input" type="text" placeholder="对鲸灵说…" autocomplete="off" enterkeyhint="send" />
+        <button class="icon-btn" id="assist-mic" title="语音">🎤</button>
+        <button class="icon-btn" id="assist-send" title="发送">➤</button>
+      </div>
+    </div>
   </div>
 
   <!-- 新建/编辑 弹窗 -->
@@ -149,6 +156,27 @@
     </div>
   </div>
 
+  <!-- 鲸灵助手聊天 -->
+  <div class="overlay chat-overlay" id="chat-overlay" hidden>
+    <div class="sheet chat-sheet">
+      <div class="sheet-head"><h2>🐋 鲸灵助手</h2><button class="icon-btn" id="chat-close">✕</button></div>
+      <div class="chat-msgs" id="chat-msgs"></div>
+      <div class="chat-foot">
+        <input id="chat-input" type="text" placeholder="对鲸灵说…" autocomplete="off" enterkeyhint="send" />
+        <button class="icon-btn" id="chat-mic" title="语音">🎤</button>
+        <button class="icon-btn" id="chat-send" title="发送">➤</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 助手设置 -->
+  <div class="overlay" id="ds-overlay" hidden>
+    <div class="sheet">
+      <div class="sheet-head"><h2>助手设置</h2><button class="icon-btn" id="ds-close">✕</button></div>
+      <div id="ds-body"></div>
+    </div>
+  </div>
+
   <!-- 通用确认弹窗 -->
   <div class="overlay" id="dialog-overlay" hidden>
     <div class="sheet dialog-sheet">
@@ -167,6 +195,7 @@
       <button class="menu-item" id="menu-sync"><span>☁️</span>同步<span class="menu-status" id="menu-sync-status"></span></button>
       <button class="menu-item" id="menu-cal"><span>📅</span>查看日历</button>
       <button class="menu-item" id="menu-remind"><span>🔔</span>提醒</button>
+      <button class="menu-item" id="menu-ds"><span>🤖</span>助手(DeepSeek)</button>
       <!-- 以后新功能加这里 -->
     </div>
   </div>
