@@ -32,6 +32,7 @@ let calSel = dateStr(new Date());
 let calMode = 'active';
 let sortGroups = { event: true, deadline: true, weekly: true, monthly: true };
 let sortMethod = 'importance';
+let expandedIds = new Set();
 let activeCat = '全部';
 let editingId = null;
 let draftCat = '学习';
@@ -543,34 +544,40 @@ function cardHTML(plan) {
   const pct = shown(plan, st);
   const fullyDone = isFullyDone(plan);
   const checked = pct >= 100;
+  const expanded = expandedIds.has(plan.id);
   const color = CAT_COLORS[plan.category] || CAT_COLORS['其他'];
   const imp = plan.importance || 5;
   const impColor = imp >= 8 ? '#FF5D7A' : (imp >= 5 ? '#FF9A3D' : '#A0A8C0');
+  const editDel = expanded ? `<button class="icon-btn" data-action="edit" data-id="${plan.id}">✏️</button><button class="icon-btn" data-action="del" data-id="${plan.id}">🗑️</button>` : '';
   let html = `<div class="card" data-id="${plan.id}">
-    <div class="card-top">
+    <div class="card-top" data-action="toggle" data-id="${plan.id}">
       <span class="tag" style="background:${color}">${esc(plan.category)}</span>
       <div class="card-title ${fullyDone ? 'done' : ''}">${esc(plan.title)}</div>
       ${checked && !fullyDone ? '<span class="tag" style="background:#4ED4A8">✓ 已打卡</span>' : ''}
       <span class="imp" style="color:${impColor}">★${imp}</span>
       <span class="badge">${PERIOD_LABEL[plan.period]}</span>
+      <span class="chev">${expanded ? '▴' : '▾'}</span>
     </div>`;
-  if (plan.period === 'once' && plan.due) {
-    const cd = countdownText(plan);
-    const ic = plan.onceType === 'event' ? '📌' : '⏰';
-    html += `<p class="card-note">${ic} ${cd}（${esc(plan.due)}）</p>`;
-  }
-  if (plan.endDate) html += `<p class="card-note">📅 截止 ${esc(plan.endDate)}</p>`;
-  if (plan.period === 'weekly') html += `<p class="card-note">🗓️ 本周剩余 ${periodRemain(plan)} 天</p>`;
-  if (plan.period === 'monthly') html += `<p class="card-note">📆 本月剩余 ${periodRemain(plan)} 天</p>`;
-  if (plan.note) html += `<p class="card-note">${esc(plan.note)}</p>`;
 
-  if (plan.subtasks.length) {
-    html += `<div class="subs">`;
-    plan.subtasks.forEach((s, i) => {
-      const on = !!(st && st.checked[i]);
-      html += `<div class="sub"><input type="checkbox" data-action="sub" data-id="${plan.id}" data-i="${i}" ${on ? 'checked' : ''}/><label class="${on ? 'on' : ''}">${esc(s.text)}</label></div>`;
-    });
-    html += `</div>`;
+  if (expanded) {
+    if (plan.period === 'once' && plan.due) {
+      const cd = countdownText(plan);
+      const ic = plan.onceType === 'event' ? '📌' : '⏰';
+      html += `<p class="card-note">${ic} ${cd}（${esc(plan.due)}）</p>`;
+    }
+    if (plan.endDate) html += `<p class="card-note">📅 截止 ${esc(plan.endDate)}</p>`;
+    if (plan.period === 'weekly') html += `<p class="card-note">🗓️ 本周剩余 ${periodRemain(plan)} 天</p>`;
+    if (plan.period === 'monthly') html += `<p class="card-note">📆 本月剩余 ${periodRemain(plan)} 天</p>`;
+    if (plan.note) html += `<p class="card-note">${esc(plan.note)}</p>`;
+
+    if (plan.subtasks.length) {
+      html += `<div class="subs">`;
+      plan.subtasks.forEach((s, i) => {
+        const on = !!(st && st.checked[i]);
+        html += `<div class="sub"><input type="checkbox" data-action="sub" data-id="${plan.id}" data-i="${i}" ${on ? 'checked' : ''}/><label class="${on ? 'on' : ''}">${esc(s.text)}</label></div>`;
+      });
+      html += `</div>`;
+    }
   }
 
   if (plan.period === 'daily' && !plan.subtasks.length) {
@@ -579,18 +586,19 @@ function cardHTML(plan) {
       <button class="btn ${doneToday ? 'ghost' : 'primary'} mini" data-action="check" data-id="${plan.id}">${doneToday ? '✓ 已打卡' : '打卡'}</button>
       <span class="streak">🔥 ${streakOf(plan)} 天</span>
       <span style="flex:1"></span>
-      <button class="icon-btn" data-action="edit" data-id="${plan.id}">✏️</button>
-      <button class="icon-btn" data-action="del" data-id="${plan.id}">🗑️</button>
+      ${editDel}
     </div>`;
   } else {
-    html += `<div class="progress-row"><div class="bar"><i style="width:${pct}%"></i></div><input class="pct" type="number" min="0" max="100" value="${pct}" data-action="pct" data-id="${plan.id}"/></div>`;
-    html += `<div class="slider-row"><input type="range" min="0" max="100" step="1" value="${pct}" data-action="slide" data-id="${plan.id}"/></div>
-    <div class="card-foot">
+    const pctEl = expanded
+      ? `<input class="pct" type="number" min="0" max="100" value="${pct}" data-action="pct" data-id="${plan.id}"/>`
+      : `<span class="pct-static">${pct}%</span>`;
+    html += `<div class="progress-row"><div class="bar"><i style="width:${pct}%"></i></div>${pctEl}</div>`;
+    if (expanded) html += `<div class="slider-row"><input type="range" min="0" max="100" step="1" value="${pct}" data-action="slide" data-id="${plan.id}"/></div>`;
+    html += `<div class="card-foot">
       <button class="btn ${checked ? 'ghost' : 'primary'} mini" data-action="done" data-id="${plan.id}">${checked ? '↩ 取消完成' : '完成'}</button>
       ${plan.period === 'daily' ? `<span class="streak">🔥 ${streakOf(plan)} 天</span>` : ''}
       <span style="flex:1"></span>
-      <button class="icon-btn" data-action="edit" data-id="${plan.id}">✏️</button>
-      <button class="icon-btn" data-action="del" data-id="${plan.id}">🗑️</button>
+      ${editDel}
     </div>`;
   }
   return html + '</div>';
@@ -643,6 +651,12 @@ content.addEventListener('click', (e) => {
   if (action === 'cal-prev') { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } render(); return; }
   if (action === 'cal-next') { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } render(); return; }
   if (action === 'cal-day') { calSel = b.dataset.date; render(); return; }
+  if (action === 'toggle') {
+    const id = b.dataset.id;
+    if (expandedIds.has(id)) expandedIds.delete(id); else expandedIds.add(id);
+    renderContent();
+    return;
+  }
   const id = b.dataset.id;
   const plan = plans.find(p => p.id === id); if (!plan) return;
 
