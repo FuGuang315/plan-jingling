@@ -4,6 +4,8 @@
 const LS_PLANS = 'jql_plans_v1';
 const LS_PROGRESS = 'jql_progress_v1';
 const LS_TOKEN = 'jql_token';
+const LS_TOPIC = 'jql_ntfy_topic';
+const LS_SCHED = 'jql_scheduled_v1';
 
 // 云端同步(GitHub 私有仓库)
 const GH_OWNER = 'FuGuang315';
@@ -310,6 +312,7 @@ async function syncFromRemote() {
       save();           // 存本地缓存(不触发上传)
       setSyncState('synced');
       render();
+      runReminderEngine();
     } else if (r.status === 404) {
       remoteSha = null;   // 云端还是空的 → 把本地推上去
       await pushToRemote();
@@ -360,6 +363,157 @@ function updateSyncBtn() {
   const map = { off: '未连接', pending: '同步中…', synced: '已同步', error: '失败' };
   el.textContent = syncToken ? (map[syncState] || '') : '未连接';
   el.style.color = syncState === 'synced' ? 'var(--blue)' : (syncState === 'error' ? '#FF7A93' : 'var(--ink-soft)');
+}
+
+// ---------- 提醒(ntfy 推送)----------
+const REMIND_HORIZON_MS = 7 * 24 * 3600 * 1000;
+
+function getTopic() {
+  let t = localStorage.getItem(LS_TOPIC);
+  if (t) return t;
+  const bytes = new Uint8Array(16);
+  if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(bytes);
+  else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+  t = 'jql-' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  localStorage.setItem(LS_TOPIC, t);
+  return t;
+}
+function saveSched(s) { localStorage.setItem(LS_SCHED, JSON.stringify(s)); }
+
+function shouldRemindOn(plan, day) {
+  const ds = dateStr(day);
+  if (plan.period === 'once') {
+    return !!(plan.due && ds === plan.due && !isFullyDone(plan));
+  }
+  if (plan.startDate && ds < plan.startDate) return false;
+  if (plan.endDate && ds > plan.endDate) return false;
+  if (isFullyDone(plan)) return false;
+  if (plan.period === 'daily') return true;
+  if (plan.period === 'weekly') return day.getDay() === 0;
+  if (plan.period === 'monthly') return day.getDate() === new Date(day.getFullYear(), day.getMonth() + 1, 0).getDate();
+  return false;
+}
+function reminderTimes(plan, from, to) {
+  const m = /^(\d{2}):(\d{2})$/.exec(plan.remindTime || '');
+  if (!m) return [];
+  const h = +m[1], min = +m[2];
+  const out = [];
+  const d = new Date(from); d.setHours(0, 0, 0, 0);
+  const end = new Date(to);
+  while (d <= end) {
+    const t = new Date(d); t.setHours(h, min, 0, 0);
+    if (t >= from && t <= to && shouldRemindOn(plan, d)) out.push(t);
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+function reminderMessage(plan) {
+  const t = plan.title;
+  if (plan.period === 'once') {
+    return plan.onceType === 'event'
+      ? { title: '📌 今天有安排', body: `「${t}」` }
+      : { title: '⏰ 今天截止', body: `「${t}」今天截止,别忘啦` };
+  }
+  if (plan.period === 'daily') return { title: '🐋 该打卡啦', body: `「${t}」还没打卡,加油!` };
+  if (plan.period === 'weekly') return { title: '🗓️ 本周目标', body: `「${t}」本周结束,完成了吗?` };
+  if (plan.period === 'monthly') return { title: '📆 本月目标', body: `「${t}」本月结束,完成了吗?` };
+  return { title: '🐋 计划鲸灵', body: t };
+}
+function sidFor(plan, t) {
+  const hh = String(t.getHours()).padStart(2, '0');
+  const mm = String(t.getMinutes()).padStart(2, '0');
+  return plan.id + '-' + dateStr(t) + '-' + hh + mm;
+}
+async function publishReminder(job) {
+  try {
+    const url = `https://ntfy.sh/${getTopic()}?title=${encodeURIComponent(job.title)}`;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Priority': '4',
+        'At': job.at.toISOString().replace(/\.\d{3}Z$/, 'Z'),
+        'X-Sequence-ID': job.sid,
+      },
+      body: job.body,
+    });
+    return r.ok;
+  } catch (e) { return false; }
+}
+async function cancelReminder(sid) {
+  try {
+    const r = await fetch(`https://ntfy.sh/${getTopic()}/${sid}`, { method: 'DELETE' });
+    return r.ok;
+  } catch (e) { return false; }
+}
+async function runReminderEngine() {
+  const sched = load(LS_SCHED, {});
+  if (!plans.some(p => p.remindTime) && !Object.keys(sched).length) return;
+  const now = new Date();
+  const to = new Date(now.getTime() + REMIND_HORIZON_MS);
+  const byId = new Map(plans.map(p => [p.id, p]));
+  const today = dateStr(new Date());
+
+  const toCancel = [];
+  const jobs = [];
+
+  // 清理:已过期直接本地删;计划删除/关闭提醒 → 取消 ntfy 端再删
+  for (const key of Object.keys(sched)) {
+    const i = key.indexOf('|');
+    const pid = key.slice(0, i), day = key.slice(i + 1);
+    const plan = byId.get(pid);
+    if (day < today) { delete sched[key]; continue; }
+    if (!plan || !plan.remindTime) { toCancel.push(sched[key].sid); delete sched[key]; }
+  }
+  // 计算要(重新)发布的提醒
+  for (const p of plans) {
+    if (!p.remindTime) continue;
+    for (const t of reminderTimes(p, now, to)) {
+      const key = p.id + '|' + dateStr(t);
+      const cur = sched[key];
+      if (cur && cur.at === t.getTime()) continue;   // 没变,跳过
+      const sid = sidFor(p, t);
+      const msg = reminderMessage(p);
+      jobs.push({ key, sid, oldSid: cur ? cur.sid : null, at: t, title: msg.title, body: msg.body });
+      sched[key] = { at: t.getTime(), sid };
+    }
+  }
+  saveSched(sched);
+
+  for (const sid of toCancel) await cancelReminder(sid);
+  for (const j of jobs) {
+    const ok = await publishReminder(j);
+    if (ok) { if (j.oldSid) await cancelReminder(j.oldSid); }
+    else { delete sched[j.key]; saveSched(sched); }
+  }
+}
+async function sendTestReminder() {
+  try {
+    const url = `https://ntfy.sh/${getTopic()}?title=${encodeURIComponent('🐋 测试成功')}`;
+    const r = await fetch(url, { method: 'POST', headers: { 'Priority': '4' }, body: '计划鲸灵提醒已连通!到点就会这样提醒你。' });
+    if (r.ok) alertBox('已发送!去看手机 ntfy App 有没有弹出这条通知。');
+    else alertBox('发送失败(HTTP ' + r.status + ')。可能是网络连不上 ntfy.sh。');
+  } catch (e) { alertBox('发送失败,连不上 ntfy.sh。'); }
+}
+function copyTopic() {
+  const topic = getTopic();
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(topic).then(() => alertBox('已复制,去 ntfy App 里粘贴订阅'));
+  } else {
+    showDialog('请手动复制这串频道名:\n\n' + topic, { hideCancel: true });
+  }
+}
+function openRemind() {
+  const topic = getTopic();
+  document.getElementById('remind-body').innerHTML = `
+    <p class="sync-desc">给计划设置「提醒时间」后,到点会推送到你手机。先发一条测试,确认手机能收到。</p>
+    <div class="field"><span>你的私密频道(在 ntfy App 里订阅它)</span>
+      <div class="topic-row"><code>${topic}</code><button class="btn ghost mini" id="remind-copy">复制</button></div>
+    </div>
+    <div class="sheet-actions"><button class="btn primary" id="remind-test">📲 发送测试提醒</button></div>
+    <p class="sync-desc" style="text-align:left;margin-top:16px">使用步骤:<br>① 手机应用商店搜 <b>ntfy</b> 安装;<br>② 打开 ntfy → 点「+」→ 订阅上面这串频道;<br>③ 点「发送测试提醒」,手机能收到即成功。<br>之后给计划填好提醒时间,到点 ntfy 就会弹。</p>`;
+  document.getElementById('remind-test').onclick = sendTestReminder;
+  document.getElementById('remind-copy').onclick = copyTopic;
+  document.getElementById('remind-overlay').hidden = false;
 }
 
 // ---------- 同步弹窗 ----------
@@ -711,6 +865,7 @@ function openSheet(id) {
   document.getElementById('f-note').value = plan ? (plan.note || '') : '';
   document.getElementById('f-due').value = (plan && plan.due) ? plan.due : '';
   document.getElementById('f-imp').value = plan ? (plan.importance || 5) : 5;
+  document.getElementById('f-remind').value = (plan && plan.remindTime) ? plan.remindTime : '';
   document.getElementById('f-start').value = (plan && plan.startDate) ? plan.startDate : '';
   document.getElementById('f-end').value = (plan && plan.endDate) ? plan.endDate : '';
   draftCat = plan ? plan.category : '学习';
@@ -785,15 +940,17 @@ function saveSheet() {
   const startDate = (draftPeriod !== 'once') ? (document.getElementById('f-start').value || null) : null;
   const endDate = (draftPeriod !== 'once') ? (document.getElementById('f-end').value || null) : null;
   const subtasks = draftSubs.map(t => ({ id: uid(), text: t })).filter(s => s.text.trim());
+  const remindTime = document.getElementById('f-remind').value || null;
 
   if (editingId) {
     const plan = plans.find(p => p.id === editingId);
-    Object.assign(plan, { title, category: draftCat, period: draftPeriod, onceType, note, due, importance, startDate, endDate, subtasks });
+    Object.assign(plan, { title, category: draftCat, period: draftPeriod, onceType, note, due, importance, startDate, endDate, subtasks, remindTime });
     reconcile(plan);
   } else {
-    plans.push({ id: uid(), title, category: draftCat, period: draftPeriod, onceType, note, due, importance, startDate, endDate, subtasks, createdAt: Date.now() });
+    plans.push({ id: uid(), title, category: draftCat, period: draftPeriod, onceType, note, due, importance, startDate, endDate, subtasks, remindTime, createdAt: Date.now() });
   }
   commit(); render(); closeSheet();
+  runReminderEngine();
 }
 function reconcile(plan) {
   const stAll = progress[plan.id]; if (!stAll) return;
@@ -826,6 +983,14 @@ document.getElementById('menu-cal').addEventListener('click', () => {
   calSel = dateStr(new Date());
   enterFull('calendar');
 });
+document.getElementById('menu-remind').addEventListener('click', () => {
+  document.getElementById('whale-overlay').hidden = true;
+  openRemind();
+});
+document.getElementById('remind-close').addEventListener('click', () => { document.getElementById('remind-overlay').hidden = true; });
+document.getElementById('remind-overlay').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('remind-overlay')) document.getElementById('remind-overlay').hidden = true;
+});
 
 function enterFull(tab) {
   prevTab = activeTab;
@@ -851,6 +1016,7 @@ function handlePlanAction(action, id) {
         plans = plans.filter(p => p.id !== id);
         delete progress[id];
         commit(); render();
+        runReminderEngine();
       }
     });
   }
@@ -979,3 +1145,4 @@ document.getElementById('today-line').textContent = greet();
 render();
 updateSyncBtn();
 if (syncToken) syncFromRemote();
+runReminderEngine();
