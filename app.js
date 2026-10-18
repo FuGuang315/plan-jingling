@@ -516,6 +516,347 @@ function openRemind() {
   document.getElementById('remind-overlay').hidden = false;
 }
 
+// ---------- 鲸灵助手(DeepSeek)----------
+const DS_API = 'https://api.deepseek.com/chat/completions';
+const LS_DS_KEY = 'jql_ds_key';
+const DS_MODEL = 'deepseek-chat';
+
+let dsKey = localStorage.getItem(LS_DS_KEY) || null;
+let chatHistory = [];
+let pendingAction = null;
+let chatBusy = false;
+let recognition = null;
+
+function clampInt(v, def, min, max) { v = parseInt(v, 10); return isNaN(v) ? def : Math.max(min, Math.min(max, v)); }
+function validTime(s) { return typeof s === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s); }
+function plansSummary() {
+  if (!plans.length) return '(当前没有任何计划)';
+  return plans.map(p => {
+    const parts = [p.title, '分类' + (p.category || '其他'), PERIOD_LABEL[p.period] || p.period];
+    if (p.period === 'once' && p.due) parts.push((p.onceType === 'event' ? '事件' : '截止') + p.due);
+    if (p.remindTime) parts.push('提醒' + p.remindTime);
+    return parts.join(',');
+  }).join(';\n');
+}
+function systemPrompt() {
+  const today = dateStr(new Date());
+  const wd = '日一二三四五六';
+  return `你是「计划鲸灵」App 内置的智能助手「鲸灵」。你只负责听懂用户的话并翻译成结构化操作,真正的数据操作由 App 执行。你只能通过工具(tools)操作,不要凭空编造数据。
+
+# 这是什么 App
+一个可爱的计划/打卡管理应用。核心是「计划」:一个要完成的任务或习惯,可设置提醒。
+
+# 计划的字段
+- title 标题(必填,简短)
+- category 分类,只能是 学习/工作/生活/健身/其他
+- period 周期,只能 once/daily/weekly/monthly(单次/每天/每周/每月)
+- onceType 仅 period=once 时用:event=当天事件,deadline=截止任务
+- due 仅 period=once 时用,日期 YYYY-MM-DD
+- note 备注(可选)
+- importance 重要度 1-10,默认 5
+- startDate/endDate 仅循环任务用,日期范围(可选)
+- subtasks 子任务(字符串数组,可选)
+- remindTime 提醒时间 "HH:MM"(可选,空=不提醒)
+
+# 提醒
+设 remindTime 后到点会推送提醒。例如"每天9点提醒我背单词"→ period=daily, remindTime="09:00"。
+
+# 今天是
+${today}(周${wd[new Date().getDay()]})。换算"明天/后天/本周日/下周五"等相对时间时,以此为准算成 YYYY-MM-DD。
+
+# 当前已有计划(供你定位,避免重复添加)
+${plansSummary()}
+
+# 工具
+1. add_plan 新建计划
+2. delete_plan 删除计划(用 match 关键词定位)
+3. edit_plan 修改计划(用 match 定位 + 要改的字段)
+4. query_plans 查询计划
+
+# 理解规则
+- "每天/每日/天天 X点做Y"→ period=daily, remindTime=换算成 HH:MM
+- "每周X做Y"→ weekly;"每月X做Y"→ monthly
+- "周五截止交报告/周五前完成"→ once, onceType=deadline, due=这个周五
+- "今天下午开会/明天去看牙"→ once, onceType=event, due=相应日期
+- 时间:早上8点/8点→08:00;晚上8点/晚8点→20:00;下午3点→15:00
+- 分类按内容猜:背单词/学习→学习;跑步/健身→健身;开会/报告/项目→工作;购物/家务→生活;猜不准用"其他"
+- 重要度没说就用 5
+- 只说"加个任务:xxx"、没提周期和时间:默认 once, onceType=deadline, due=今天
+- 删/改时,match 用任务标题里的关键词(尽量唯一)
+
+# 规则
+- 必须通过工具操作,返回合法工具调用。
+- title 简洁准确,提取核心意图。
+- 日期/时间严格换算,不要臆造。
+- 指令含糊、缺必要信息(如删哪个说不清)时,不要调工具,直接回复一个澄清问题。`;
+}
+const DS_TOOLS = [
+  { type: 'function', function: { name: 'add_plan', description: '新建一个计划', parameters: { type: 'object', properties: {
+    title: { type: 'string', description: '标题' },
+    category: { type: 'string', enum: CATS },
+    period: { type: 'string', enum: ['once', 'daily', 'weekly', 'monthly'] },
+    onceType: { type: 'string', enum: ['event', 'deadline'] },
+    due: { type: 'string', description: 'YYYY-MM-DD,仅once时' },
+    note: { type: 'string' },
+    importance: { type: 'integer', minimum: 1, maximum: 10 },
+    startDate: { type: 'string', description: 'YYYY-MM-DD' },
+    endDate: { type: 'string', description: 'YYYY-MM-DD' },
+    subtasks: { type: 'array', items: { type: 'string' } },
+    remindTime: { type: 'string', description: 'HH:MM' }
+  }, required: ['title'] } } },
+  { type: 'function', function: { name: 'delete_plan', description: '删除计划', parameters: { type: 'object', properties: {
+    match: { type: 'string', description: '要删的任务标题关键词' }
+  }, required: ['match'] } } },
+  { type: 'function', function: { name: 'edit_plan', description: '修改计划', parameters: { type: 'object', properties: {
+    match: { type: 'string', description: '要改的任务标题关键词' },
+    title: { type: 'string' },
+    category: { type: 'string', enum: CATS },
+    period: { type: 'string', enum: ['once', 'daily', 'weekly', 'monthly'] },
+    onceType: { type: 'string', enum: ['event', 'deadline'] },
+    due: { type: 'string' },
+    note: { type: 'string' },
+    importance: { type: 'integer' },
+    remindTime: { type: 'string', description: 'HH:MM,空字符串表示取消提醒' },
+    startDate: { type: 'string' },
+    endDate: { type: 'string' }
+  }, required: ['match'] } } },
+  { type: 'function', function: { name: 'query_plans', description: '查询计划', parameters: { type: 'object', properties: {
+    type: { type: 'string', enum: ['today', 'week', 'month', 'all'], description: 'today今天/week本周/month本月/all全部' }
+  }, required: ['type'] } } }
+];
+
+async function callDeepSeek(messages, tools) {
+  const body = { model: DS_MODEL, messages, stream: false };
+  if (tools) body.tools = tools;
+  const r = await fetch(DS_API, { method: 'POST', headers: { 'Authorization': 'Bearer ' + dsKey, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    let msg = 'HTTP ' + r.status;
+    try { const j = await r.json(); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+function pushMsg(role, text) { chatHistory.push({ role, text }); }
+function findPlans(match) {
+  const m = (match || '').toLowerCase();
+  if (!m) return [];
+  const exact = plans.filter(p => p.title.toLowerCase() === m);
+  if (exact.length) return exact;
+  return plans.filter(p => p.title.toLowerCase().includes(m));
+}
+function doAddPlan(a) {
+  const title = (a.title || '').trim();
+  if (!title) return '标题是空的,没加成。';
+  const period = ['once', 'daily', 'weekly', 'monthly'].includes(a.period) ? a.period : 'once';
+  const plan = {
+    id: uid(), title,
+    category: CATS.includes(a.category) ? a.category : '其他',
+    period,
+    onceType: period === 'once' ? (a.onceType === 'event' ? 'event' : 'deadline') : null,
+    note: a.note || '',
+    due: period === 'once' ? (a.due || null) : null,
+    importance: clampInt(a.importance, 5, 1, 10),
+    startDate: period !== 'once' ? (a.startDate || null) : null,
+    endDate: period !== 'once' ? (a.endDate || null) : null,
+    subtasks: Array.isArray(a.subtasks) ? a.subtasks.filter(s => s && s.trim()).map(s => ({ id: uid(), text: s.trim() })) : [],
+    remindTime: validTime(a.remindTime) ? a.remindTime : null,
+    createdAt: Date.now()
+  };
+  plans.push(plan);
+  commit(); render();
+  if (plan.remindTime) runReminderEngine();
+  return '✅ 已添加「' + title + '」' + (period !== 'once' ? ' · ' + PERIOD_LABEL[period] : '') + (plan.remindTime ? ' · 提醒 ' + plan.remindTime : '');
+}
+function doDeletePlan(a) {
+  const found = findPlans(a.match);
+  if (!found.length) { pushMsg('assistant', '没找到和「' + (a.match || '') + '」匹配的任务,再说清楚点?'); return; }
+  pendingAction = { type: 'delete', planIds: found.map(p => p.id), label: found.length === 1 ? found[0].title : ('这 ' + found.length + ' 个任务') };
+}
+function editSummary(ch) {
+  const parts = [];
+  if (ch.title) parts.push('标题→' + ch.title);
+  if (ch.category) parts.push('分类→' + ch.category);
+  if (ch.period) parts.push('周期→' + PERIOD_LABEL[ch.period]);
+  if ('remindTime' in ch) parts.push('提醒→' + (ch.remindTime || '取消'));
+  if (ch.due) parts.push('日期→' + ch.due);
+  if (ch.importance) parts.push('重要度→' + ch.importance);
+  return parts.join(',') || '内容不变';
+}
+function doEditPlan(a) {
+  const found = findPlans(a.match);
+  if (!found.length) { pushMsg('assistant', '没找到和「' + (a.match || '') + '」匹配的任务,再说清楚点?'); return; }
+  if (found.length > 1) { pushMsg('assistant', '「' + (a.match || '') + '」匹配到好几个任务,说具体一点?'); return; }
+  const ch = {};
+  if (a.title) ch.title = a.title.trim();
+  if (CATS.includes(a.category)) ch.category = a.category;
+  if (['once', 'daily', 'weekly', 'monthly'].includes(a.period)) ch.period = a.period;
+  if (a.onceType === 'event' || a.onceType === 'deadline') ch.onceType = a.onceType;
+  if ('due' in a) ch.due = a.due || null;
+  if ('note' in a) ch.note = a.note || '';
+  if ('importance' in a && a.importance != null) ch.importance = clampInt(a.importance, 5, 1, 10);
+  if ('startDate' in a) ch.startDate = a.startDate || null;
+  if ('endDate' in a) ch.endDate = a.endDate || null;
+  if ('remindTime' in a) ch.remindTime = validTime(a.remindTime) ? a.remindTime : null;
+  if (!Object.keys(ch).length) { pushMsg('assistant', '好像没有要改的内容,再说清楚点?'); return; }
+  pendingAction = { type: 'edit', planId: found[0].id, changes: ch, label: found[0].title, summary: editSummary(ch) };
+}
+function queryPlansByType(t) {
+  if (t === 'all') return plans.filter(p => !isFullyDone(p));
+  if (t === 'week') return plans.filter(p => p.period === 'weekly' && !isFullyDone(p));
+  if (t === 'month') return plans.filter(p => p.period === 'monthly' && !isFullyDone(p));
+  const today = dateStr(new Date());
+  return plans.filter(p => {
+    if (p.period === 'daily') return !isFullyDone(p);
+    if (p.period === 'once') return !isFullyDone(p) && planOnDay(p, today);
+    return false;
+  });
+}
+function doQueryPlans(a) {
+  const t = a.type || 'today';
+  const list = queryPlansByType(t);
+  if (!list.length) return t === 'today' ? '今天没有待办,真棒 🎉' : '没有符合条件的任务。';
+  return list.map(p => '· ' + p.title + '（' + PERIOD_LABEL[p.period] + (p.remindTime ? ',提醒' + p.remindTime : '') + '）').join('\n');
+}
+
+async function handleToolCall(tc) {
+  const fn = tc.function || {};
+  let args = {};
+  try { args = (typeof fn.arguments === 'string') ? JSON.parse(fn.arguments) : (fn.arguments || {}); } catch (e) { args = {}; }
+  if (fn.name === 'add_plan') { pushMsg('assistant', doAddPlan(args)); }
+  else if (fn.name === 'delete_plan') { doDeletePlan(args); }
+  else if (fn.name === 'edit_plan') { doEditPlan(args); }
+  else if (fn.name === 'query_plans') { pushMsg('assistant', doQueryPlans(args)); }
+}
+
+async function sendToAgent(text) {
+  const t = (text || '').trim();
+  if (!t || chatBusy) return;
+  if (!dsKey) { openDsSettings(); return; }
+  chatBusy = true;
+  pushMsg('user', t);
+  renderChat();
+  try {
+    const messages = [
+      { role: 'system', content: systemPrompt() },
+      { role: 'user', content: t }
+    ];
+    const data = await callDeepSeek(messages, DS_TOOLS);
+    const msg = data.choices && data.choices[0] && data.choices[0].message;
+    if (!msg) { pushMsg('assistant', '没听懂,再说一遍?'); return; }
+    if (msg.content) pushMsg('assistant', msg.content);
+    if (msg.tool_calls && msg.tool_calls.length) {
+      for (const tc of msg.tool_calls) await handleToolCall(tc);
+    } else if (!msg.content) {
+      pushMsg('assistant', '…');
+    }
+  } catch (e) {
+    pushMsg('assistant', '出错了:' + (e.message || e) + '。检查密钥/网络后重试。');
+  } finally {
+    chatBusy = false;
+    renderChat();
+    openChat();
+  }
+}
+
+function confirmPending() {
+  if (!pendingAction) return;
+  if (pendingAction.type === 'delete') {
+    const ids = new Set(pendingAction.planIds);
+    plans = plans.filter(p => !ids.has(p.id));
+    ids.forEach(id => delete progress[id]);
+    commit(); render(); runReminderEngine();
+    pushMsg('assistant', '🗑️ 已删除「' + pendingAction.label + '」');
+  } else if (pendingAction.type === 'edit') {
+    const plan = plans.find(p => p.id === pendingAction.planId);
+    if (plan) {
+      const ch = pendingAction.changes;
+      if (ch.period) {
+        if (ch.period === 'once') plan.onceType = plan.onceType || 'deadline';
+        else { plan.onceType = null; plan.due = null; }
+      }
+      Object.assign(plan, ch);
+      reconcile(plan);
+      commit(); render(); runReminderEngine();
+      pushMsg('assistant', '✏️ 已改好「' + plan.title + '」');
+    } else {
+      pushMsg('assistant', '这个任务已经不存在了');
+    }
+  }
+  pendingAction = null;
+  renderChat();
+}
+function cancelPending() { pendingAction = null; renderChat(); }
+
+function renderChat() {
+  const el = document.getElementById('chat-msgs');
+  if (!el) return;
+  let html = '';
+  for (const m of chatHistory) html += '<div class="msg ' + m.role + '">' + esc(m.text) + '</div>';
+  if (pendingAction) {
+    const del = pendingAction.type === 'delete';
+    html += '<div class="confirm-card"><div class="cc-title">' + (del ? '删除「' + esc(pendingAction.label) + '」?' : '修改「' + esc(pendingAction.label) + '」?') + '</div>'
+      + (del ? '<div class="cc-desc">删除后不能恢复,确定吗?</div>' : '<div class="cc-desc">' + esc(pendingAction.summary || '') + '</div>')
+      + '<div class="cc-actions"><button class="btn primary mini" data-action="cc-ok">确认</button><button class="btn ghost mini" data-action="cc-cancel">取消</button></div></div>';
+  }
+  el.innerHTML = html;
+  el.scrollTop = el.scrollHeight;
+}
+function openChat() { const o = document.getElementById('chat-overlay'); o.hidden = false; renderChat(); setTimeout(() => { const i = document.getElementById('chat-input'); if (i) i.focus(); }, 80); }
+function closeChat() { document.getElementById('chat-overlay').hidden = true; }
+
+function startVoice(intoInputId) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { alertBox('当前浏览器不支持语音输入,请打字'); return; }
+  if (recognition) { try { recognition.abort(); } catch (e) {} }
+  recognition = new SR();
+  recognition.lang = 'zh-CN';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  recognition.onresult = (e) => { const text = e.results[0][0].transcript; const inp = document.getElementById(intoInputId); if (inp) inp.value = text; sendToAgent(text); };
+  recognition.onerror = () => { alertBox('语音识别失败(国内浏览器可能不支持),请打字。'); };
+  recognition.onend = () => { recognition = null; };
+  try { recognition.start(); } catch (e) { alertBox('语音启动失败,请打字'); }
+}
+
+function openDsSettings() {
+  const body = document.getElementById('ds-body');
+  if (dsKey) {
+    body.innerHTML = '<p class="sync-desc">已设置 DeepSeek 密钥,鲸灵助手可以直接用了。</p><div class="sheet-actions"><button class="btn ghost" id="ds-clear">清除密钥</button></div>';
+    document.getElementById('ds-clear').onclick = () => { dsKey = null; localStorage.removeItem(LS_DS_KEY); openDsSettings(); };
+  } else {
+    body.innerHTML = '<p class="sync-desc">填一个 DeepSeek 密钥,鲸灵助手就能听你指挥。<br>去 platform.deepseek.com 注册 → API Keys → 创建,复制 sk-... 到这里(只存本机浏览器)。</p><label class="field"><span>DeepSeek 密钥</span><input id="ds-key-input" type="text" placeholder="sk-..." autocomplete="off"/></label><div class="sheet-actions"><button class="btn primary" id="ds-save">保存</button></div>';
+    document.getElementById('ds-save').onclick = () => { const v = document.getElementById('ds-key-input').value.trim(); if (!v) { alertBox('请粘贴密钥'); return; } dsKey = v; localStorage.setItem(LS_DS_KEY, v); openDsSettings(); alertBox('已保存,可以开始用了'); };
+  }
+  document.getElementById('ds-overlay').hidden = false;
+}
+
+function sendFromInput(inputEl) {
+  const v = inputEl.value.trim();
+  if (!v) return;
+  if (!dsKey) { openDsSettings(); return; }
+  inputEl.value = '';
+  sendToAgent(v);
+}
+
+// 事件绑定
+document.getElementById('assist-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendFromInput(e.target); } });
+document.getElementById('assist-send').addEventListener('click', () => sendFromInput(document.getElementById('assist-input')));
+document.getElementById('assist-mic').addEventListener('click', () => startVoice('assist-input'));
+document.getElementById('chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendFromInput(e.target); } });
+document.getElementById('chat-send').addEventListener('click', () => sendFromInput(document.getElementById('chat-input')));
+document.getElementById('chat-mic').addEventListener('click', () => startVoice('chat-input'));
+document.getElementById('chat-close').addEventListener('click', closeChat);
+document.getElementById('chat-overlay').addEventListener('click', (e) => { if (e.target === document.getElementById('chat-overlay')) closeChat(); });
+document.getElementById('chat-msgs').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-action]'); if (!b) return;
+  if (b.dataset.action === 'cc-ok') confirmPending();
+  else if (b.dataset.action === 'cc-cancel') cancelPending();
+});
+document.getElementById('menu-ds').addEventListener('click', () => { document.getElementById('whale-overlay').hidden = true; openDsSettings(); });
+document.getElementById('ds-close').addEventListener('click', () => { document.getElementById('ds-overlay').hidden = true; });
+document.getElementById('ds-overlay').addEventListener('click', (e) => { if (e.target === document.getElementById('ds-overlay')) document.getElementById('ds-overlay').hidden = true; });
+
 // ---------- 同步弹窗 ----------
 function openSync() {
   renderSyncBody();
@@ -573,7 +914,7 @@ function updateChrome() {
   const set = (el) => { if (el) el.style.display = inFull ? 'none' : ''; };
   set(document.getElementById('tabbar'));
   set(document.getElementById('cat-chips'));
-  set(document.getElementById('fab'));
+  set(document.getElementById('assist-bar'));
   set(document.querySelector('.header'));
 }
 
