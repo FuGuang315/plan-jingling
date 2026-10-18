@@ -110,6 +110,11 @@
         <input id="f-imp" type="number" min="1" max="10" value="5" />
       </div>
 
+      <label class="field">
+        <span>提醒时间（可选，空 = 不提醒）</span>
+        <input id="f-remind" type="time" />
+      </label>
+
       <div class="field">
         <span>子任务（可选）</span>
         <div id="f-sub-list"></div>
@@ -136,6 +141,14 @@
     </div>
   </div>
 
+  <!-- 提醒设置 -->
+  <div class="overlay" id="remind-overlay" hidden>
+    <div class="sheet">
+      <div class="sheet-head"><h2>提醒设置</h2><button class="icon-btn" id="remind-close">✕</button></div>
+      <div id="remind-body"></div>
+    </div>
+  </div>
+
   <!-- 通用确认弹窗 -->
   <div class="overlay" id="dialog-overlay" hidden>
     <div class="sheet dialog-sheet">
@@ -153,6 +166,7 @@
       <div class="sheet-head"><h2>更多</h2><button class="icon-btn" id="whale-close">✕</button></div>
       <button class="menu-item" id="menu-sync"><span>☁️</span>同步<span class="menu-status" id="menu-sync-status"></span></button>
       <button class="menu-item" id="menu-cal"><span>📅</span>查看日历</button>
+      <button class="menu-item" id="menu-remind"><span>🔔</span>提醒</button>
       <!-- 以后新功能加这里 -->
     </div>
   </div>
