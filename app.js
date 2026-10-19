@@ -847,6 +847,7 @@ function applyChatHeight(h) {
 // ---------- 语音输入(讯飞「语音听写」iat)----------
 // 密钥只存在本机 localStorage,不写进源码(GitHub Pages 上源码是公开的)。
 // 流程:麦克风 → 16kHz 单声道 PCM → 每 40ms(1280 字节)一帧 base64 推进 WebSocket。
+const APP_VER = 'v31';           // 和 index.html 的 ?v=31、sw.js 的 CACHE 同步改
 const LS_XF = 'jql_xfyun_v1';
 const XF_HOST = 'iat-api.xfyun.cn';
 const XF_PATH = '/v2/iat';
@@ -855,6 +856,25 @@ const XF_MIN_SAMPLES = 3200;     // 少于 0.2 秒就当作误触
 
 let xfCfg = (() => { try { return JSON.parse(localStorage.getItem(LS_XF)) || {}; } catch (e) { return {}; } })();
 function xfReady() { return !!(xfCfg.appid && xfCfg.apikey && xfCfg.apisecret); }
+
+// 中文输入法/复制粘贴常见的坑:全角字符、零宽字符、多余空格。
+// 这些字符看起来和半角一模一样、长度也一样,但码点不同 → 签名必然对不上。
+// 存之前统一归一化,能自动修掉一整类"怎么输都不对"的问题。
+function normXf(v) {
+  if (!v) return '';
+  return String(v)
+    .replace(/[\u200b-\u200d\ufeff]/g, '')   // 零宽字符
+    .replace(/\u3000/g, '')                    // 全角空格
+    .replace(/[\uff01-\uff5e]/g, (c) =>       // 全角 ASCII 转半角
+      String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/\s+/g, '')
+    .trim();
+}
+
+function maskXf(s) {
+  if (!s) return '空';
+  return s.length > 10 ? s.slice(0, 4) + '…' + s.slice(-4) : s;
+}
 
 function bufToB64(buf) {
   const bytes = new Uint8Array(buf);
@@ -957,6 +977,7 @@ function xfHandshakeTest() {
 async function xfDiag() {
   const out = [];
   const M = (ok) => ok ? '✅' : '❌';
+  out.push('📦 页面版本:' + APP_VER + '(不是 ' + APP_VER + ' 就是缓存没刷)');
   out.push(M(window.isSecureContext) + ' 页面环境:' + (window.isSecureContext ? 'https 安全环境' : '不是 https(浏览器禁止录音)'));
   const cs = !!(window.crypto && crypto.subtle);
   out.push(M(cs) + ' 加密接口:' + (cs ? '可用' : '不可用'));
@@ -1249,19 +1270,22 @@ function openDsSettings() {
   };
   const xfSave = document.getElementById('xf-save');
   if (xfSave) xfSave.onclick = () => {
-    const appid = document.getElementById('xf-appid').value.trim();
-    const apikey = document.getElementById('xf-apikey').value.trim();
-    const apisecret = document.getElementById('xf-apisecret').value.trim();
+    const appid = normXf(document.getElementById('xf-appid').value);
+    let apikey = normXf(document.getElementById('xf-apikey').value);
+    const apisecret = normXf(document.getElementById('xf-apisecret').value);
     if (!appid || !apikey || !apisecret) { alertBox('三个值都要填'); return; }
     // 讯飞的三值长度是固定的,长度不对基本就是打错或复制不全
     if (appid.length !== 8 || apikey.length !== 32 || apisecret.length !== 32) {
       alertBox('长度不对:\nAPPID 应该是 8 位,现在 ' + appid.length + '\nAPIKey 应该是 32 位,现在 ' + apikey.length + '\nAPISecret 应该是 32 位,现在 ' + apisecret.length + '\n\n请回去核对一下,别复制漏了空格或字符');
       return;
     }
+    // APIKey 是十六进制,大小写不影响它的含义;统一成小写,顺手修掉"首字母被输入法大写"
+    if (/^[0-9a-fA-F]{32}$/.test(apikey)) apikey = apikey.toLowerCase();
     xfCfg = { appid: appid, apikey: apikey, apisecret: apisecret };
     localStorage.setItem(LS_XF, JSON.stringify(xfCfg));
     openDsSettings();
-    alertBox('语音配置已保存,按住 🎤 试试');
+    // 存完立刻验证一次:不再让你自己判断"到底通没通"
+    setTimeout(() => { const b = document.getElementById('xf-test'); if (b) b.click(); }, 120);
   };
 
   document.getElementById('ds-overlay').hidden = false;
@@ -1952,7 +1976,9 @@ function greet() {
 }
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  // updateViaCache:'none' —— 让浏览器每次都绕过 HTTP 缓存去取 sw.js,
+  // 否则改了版本号却可能几天都收不到更新(尤其手机浏览器)
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
 }
 document.getElementById('today-line').textContent = greet();
 render();
