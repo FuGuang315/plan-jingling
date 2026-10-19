@@ -366,7 +366,9 @@ function updateSyncBtn() {
 }
 
 // ---------- 提醒(ntfy 推送)----------
-const REMIND_HORIZON_MS = 7 * 24 * 3600 * 1000;
+// ntfy.sh 免费版对「定时消息」有硬上限:最长只能预约 72 小时(实测 72.5h 起返回 40006)。
+// 所以只往前排 3 天差 1 分钟,留一点时钟误差余量。
+const REMIND_HORIZON_MS = 3 * 24 * 3600 * 1000 - 60 * 1000;
 
 function getTopic() {
   let t = localStorage.getItem(LS_TOPIC);
@@ -510,7 +512,8 @@ function openRemind() {
       <div class="topic-row"><code>${topic}</code><button class="btn ghost mini" id="remind-copy">复制</button></div>
     </div>
     <div class="sheet-actions"><button class="btn primary" id="remind-test">📲 发送测试提醒</button></div>
-    <p class="sync-desc" style="text-align:left;margin-top:16px">使用步骤:<br>① 手机应用商店搜 <b>ntfy</b> 安装;<br>② 打开 ntfy → 点「+」→ 订阅上面这串频道;<br>③ 点「发送测试提醒」,手机能收到即成功。<br>之后给计划填好提醒时间,到点 ntfy 就会弹。</p>`;
+    <p class="sync-desc" style="text-align:left;margin-top:16px">使用步骤:<br>① 手机应用商店搜 <b>ntfy</b> 安装;<br>② 打开 ntfy → 点「+」→ 订阅上面这串频道;<br>③ 点「发送测试提醒」,手机能收到即成功。<br>之后给计划填好提醒时间,到点 ntfy 就会弹。</p>
+    <p class="sync-desc" style="text-align:left">⚠️ ntfy 免费版只能预约 <b>3 天内</b>的提醒。所以 App 至少每 3 天打开一次,提醒才会一直排上队。</p>`;
   document.getElementById('remind-test').onclick = sendTestReminder;
   document.getElementById('remind-copy').onclick = copyTopic;
   document.getElementById('remind-overlay').hidden = false;
@@ -521,8 +524,13 @@ const DS_API = 'https://api.deepseek.com/chat/completions';
 const LS_DS_KEY = 'jql_ds_key';
 const DS_MODEL = 'deepseek-chat';
 
+const LS_CHAT = 'jql_chat_v1';
+const CHAT_MAX = 50;
+
 let dsKey = localStorage.getItem(LS_DS_KEY) || null;
-let chatHistory = [];
+let chatHistory = (() => {
+  try { return JSON.parse(localStorage.getItem(LS_CHAT)) || []; } catch (e) { return []; }
+})();
 let pendingAction = null;
 let chatBusy = false;
 
@@ -636,7 +644,14 @@ async function callDeepSeek(messages, tools) {
   return r.json();
 }
 
-function pushMsg(role, text) { chatHistory.push({ role, text }); }
+function saveChat() {
+  try { localStorage.setItem(LS_CHAT, JSON.stringify(chatHistory.slice(-CHAT_MAX))); } catch (e) {}
+}
+function pushMsg(role, text) {
+  chatHistory.push({ role: role, text: text });
+  if (chatHistory.length > CHAT_MAX) chatHistory = chatHistory.slice(-CHAT_MAX);
+  saveChat();
+}
 function findPlans(match) {
   const m = (match || '').toLowerCase();
   if (!m) return [];
@@ -736,10 +751,12 @@ async function sendToAgent(text) {
   pushMsg('user', t);
   renderChat();
   try {
-    const messages = [
-      { role: 'system', content: systemPrompt() },
-      { role: 'user', content: t }
-    ];
+    // 带上最近 20 条对话,否则模型只看得到当前这一句(之前"上次说的话不记得")
+    const history = chatHistory
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && m.text)
+      .slice(-20)
+      .map(m => ({ role: m.role, content: m.text }));
+    const messages = [{ role: 'system', content: systemPrompt() }].concat(history);
     const data = await callDeepSeek(messages, DS_TOOLS);
     const msg = data.choices && data.choices[0] && data.choices[0].message;
     if (!msg) { pushMsg('assistant', '没听懂,再说一遍?'); return; }
@@ -791,6 +808,9 @@ function renderChat() {
   const el = document.getElementById('chat-msgs');
   if (!el) return;
   let html = '';
+  if (!chatHistory.length && !pendingAction) {
+    html = '<div class="chat-empty">还没有对话。<br>试试问我「今天还有什么没做完」</div>';
+  }
   for (const m of chatHistory) html += '<div class="msg ' + m.role + '">' + esc(m.text) + '</div>';
   if (pendingAction) {
     const del = pendingAction.type === 'delete';
@@ -801,8 +821,28 @@ function renderChat() {
   el.innerHTML = html;
   el.scrollTop = el.scrollHeight;
 }
-function openChat() { const o = document.getElementById('chat-overlay'); o.hidden = false; renderChat(); setTimeout(() => { const i = document.getElementById('chat-input'); if (i) i.focus(); }, 80); }
-function closeChat() { document.getElementById('chat-overlay').hidden = true; }
+function openChat() {
+  document.getElementById('chat-overlay').hidden = false;
+  document.querySelector('.app').classList.add('chat-open');
+  renderChat();
+}
+function closeChat() {
+  document.getElementById('chat-overlay').hidden = true;
+  document.querySelector('.app').classList.remove('chat-open');
+}
+
+// 面板高度:可上下拖动,记住上次的位置
+const CHAT_H_KEY = 'jql_chat_h';
+function applyChatHeight(h) {
+  const vh = window.innerHeight || 600;
+  h = Math.max(vh * 0.2, Math.min(vh * 0.85, h));
+  document.documentElement.style.setProperty('--chat-h', h + 'px');
+  return h;
+}
+(function initChatHeight() {
+  const saved = parseInt(localStorage.getItem(CHAT_H_KEY) || '', 10);
+  if (saved) applyChatHeight(saved);
+})();
 
 // ---------- 语音输入(讯飞「语音听写」iat)----------
 // 密钥只存在本机 localStorage,不写进源码(GitHub Pages 上源码是公开的)。
@@ -1124,12 +1164,48 @@ document.getElementById('chat-send').addEventListener('click', () => sendFromInp
 bindMic('chat-mic', 'chat-input');
 document.getElementById('chat-close').addEventListener('click', closeChat);
 document.getElementById('chat-overlay').addEventListener('click', (e) => { if (e.target === document.getElementById('chat-overlay')) closeChat(); });
+document.getElementById('chat-clear').addEventListener('click', async () => {
+  if (!chatHistory.length) { alertBox('还没有聊天记录'); return; }
+  const ok = await showDialog('清空全部聊天记录？清空后不能恢复。', { okText: '清空' });
+  if (!ok) return;
+  chatHistory = [];
+  saveChat();
+  renderChat();
+});
+
+// 拖动面板顶部的小横条调整高度
+(function bindChatDrag() {
+  const grip = document.getElementById('chat-grip');
+  const sheet = document.getElementById('chat-sheet');
+  if (!grip || !sheet) return;
+  let start = null;
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+    start = { y: e.clientY, h: sheet.getBoundingClientRect().height };
+  });
+  grip.addEventListener('pointermove', (e) => {
+    if (!start) return;
+    e.preventDefault();
+    applyChatHeight(start.h + (start.y - e.clientY));
+  });
+  const end = () => {
+    if (!start) return;
+    start = null;
+    try {
+      localStorage.setItem(CHAT_H_KEY, String(Math.round(sheet.getBoundingClientRect().height)));
+    } catch (e) {}
+  };
+  grip.addEventListener('pointerup', end);
+  grip.addEventListener('pointercancel', end);
+})();
 document.getElementById('chat-msgs').addEventListener('click', (e) => {
   const b = e.target.closest('[data-action]'); if (!b) return;
   if (b.dataset.action === 'cc-ok') confirmPending();
   else if (b.dataset.action === 'cc-cancel') cancelPending();
 });
 document.getElementById('menu-ds').addEventListener('click', () => { document.getElementById('whale-overlay').hidden = true; openDsSettings(); });
+document.getElementById('menu-chat').addEventListener('click', () => { document.getElementById('whale-overlay').hidden = true; openChat(); });
 document.getElementById('ds-close').addEventListener('click', () => { document.getElementById('ds-overlay').hidden = true; });
 document.getElementById('ds-overlay').addEventListener('click', (e) => { if (e.target === document.getElementById('ds-overlay')) document.getElementById('ds-overlay').hidden = true; });
 
@@ -1320,7 +1396,7 @@ function cardHTML(plan) {
   const imp = plan.importance || 5;
   const impColor = imp >= 8 ? '#FF5D7A' : (imp >= 5 ? '#FF9A3D' : '#A0A8C0');
   const editDel = expanded ? `<button class="icon-btn" data-action="edit" data-id="${plan.id}">✏️</button><button class="icon-btn" data-action="del" data-id="${plan.id}">🗑️</button>` : '';
-  let html = `<div class="card" data-id="${plan.id}">
+  let html = `<div class="card${expanded ? ' expanded' : ''}" data-id="${plan.id}">
     <div class="card-top" data-action="toggle" data-id="${plan.id}">
       <span class="tag" style="background:${color}">${esc(plan.category)}</span>
       <div class="card-title ${fullyDone ? 'done' : ''}">${esc(plan.title)}</div>
@@ -1360,16 +1436,16 @@ function cardHTML(plan) {
       ${editDel}
     </div>`;
   } else {
-    const pctEl = expanded
-      ? `<input class="pct" type="number" min="0" max="100" value="${pct}" data-action="pct" data-id="${plan.id}"/>`
-      : `<span class="pct-static">${pct}%</span>`;
-    html += `<div class="progress-row"><div class="bar"><i style="width:${pct}%"></i></div>${pctEl}</div>`;
-    if (expanded) html += `<div class="slider-row"><input type="range" min="0" max="100" step="1" value="${pct}" data-action="slide" data-id="${plan.id}"/></div>`;
+    // 收起时不需要进度条,只在右下角留一个百分比,省一整行高度
+    if (expanded) {
+      html += `<div class="progress-row"><div class="bar"><i style="width:${pct}%"></i></div><input class="pct" type="number" min="0" max="100" value="${pct}" data-action="pct" data-id="${plan.id}"/></div>`;
+      html += `<div class="slider-row"><input type="range" min="0" max="100" step="1" value="${pct}" data-action="slide" data-id="${plan.id}"/></div>`;
+    }
     html += `<div class="card-foot">
       <button class="btn ${checked ? 'ghost' : 'primary'} mini" data-action="done" data-id="${plan.id}">${checked ? '↩ 取消完成' : '完成'}</button>
       ${plan.period === 'daily' ? `<span class="streak">🔥 ${streakOf(plan)} 天</span>` : ''}
       <span style="flex:1"></span>
-      ${editDel}
+      ${expanded ? editDel : `<span class="pct-static">${pct}%</span>`}
     </div>`;
   }
   return html + '</div>';
