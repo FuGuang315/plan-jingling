@@ -158,8 +158,13 @@
 
   <!-- 鲸灵助手聊天 -->
   <div class="overlay chat-overlay" id="chat-overlay" hidden>
-    <div class="sheet chat-sheet">
-      <div class="sheet-head"><h2>🐋 鲸灵助手</h2><button class="icon-btn" id="chat-close">✕</button></div>
+    <div class="sheet chat-sheet" id="chat-sheet">
+      <div class="chat-grip" id="chat-grip"><i></i></div>
+      <div class="sheet-head chat-head">
+        <h2>🐋 鲸灵助手</h2>
+        <button class="icon-btn" id="chat-clear" title="清空聊天记录">🗑️</button>
+        <button class="icon-btn" id="chat-close" title="收起">▾</button>
+      </div>
       <div class="chat-msgs" id="chat-msgs"></div>
       <div class="chat-foot">
         <input id="chat-input" type="text" placeholder="对鲸灵说…" autocomplete="off" enterkeyhint="send" />
@@ -195,6 +200,7 @@
       <button class="menu-item" id="menu-sync"><span>☁️</span>同步<span class="menu-status" id="menu-sync-status"></span></button>
       <button class="menu-item" id="menu-cal"><span>📅</span>查看日历</button>
       <button class="menu-item" id="menu-remind"><span>🔔</span>提醒</button>
+      <button class="menu-item" id="menu-chat"><span>💬</span>和鲸灵聊天</button>
       <button class="menu-item" id="menu-ds"><span>🤖</span>助手与语音设置</button>
       <!-- 以后新功能加这里 -->
     </div>
