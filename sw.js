@@ -1,4 +1,4 @@
-const CACHE = 'jql-v26';
+const CACHE = 'jql-v28';
 const ASSETS = ['./', './index.html', './style.css', './app.js', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', (e) => {
