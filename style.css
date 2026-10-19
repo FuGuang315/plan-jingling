@@ -331,3 +331,50 @@ body {
 
 .sheet-actions { display: flex; gap: 10px; margin-top: 20px; }
 .sheet-actions .btn { flex: 1; padding: 13px; font-size: 15px; }
+
+/* ---------- 聊天面板:贴在标签栏上方,可拖拽高度 ---------- */
+:root { --chat-h: 42vh; }
+
+.overlay.chat-overlay {
+  background: transparent;
+  pointer-events: none;
+  bottom: calc(64px + env(safe-area-inset-bottom));
+  align-items: flex-end;
+}
+.sheet.chat-sheet {
+  pointer-events: auto;
+  height: var(--chat-h);
+  max-height: none;
+  padding: 0 16px 12px;
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -10px 34px rgba(108, 139, 255, .18);
+  display: flex; flex-direction: column;
+}
+.chat-grip {
+  flex: 0 0 auto;
+  padding: 10px 0 6px;
+  cursor: grab;
+  touch-action: none;
+  display: flex; justify-content: center;
+}
+.chat-grip i {
+  display: block; width: 40px; height: 5px; border-radius: 999px;
+  background: #DDE3F5;
+}
+.chat-grip:active { cursor: grabbing; }
+.chat-empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: var(--ink-soft); font-size: 13px; line-height: 1.9; text-align: center;
+}
+.chat-head { padding: 0 0 6px; }
+.chat-head .icon-btn { font-size: 15px; }
+.app.chat-open .assist-bar { display: none; }
+.app.chat-open { padding-bottom: calc(var(--chat-h) + 96px + env(safe-area-inset-bottom)); }
+
+/* ---------- 卡片收起时的紧凑样式 ---------- */
+.card-title {
+  min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.card.expanded .card-title { white-space: normal; overflow: visible; }
+.card-top { align-items: center; }
