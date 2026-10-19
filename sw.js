@@ -1,5 +1,5 @@
-const CACHE = 'jql-v30';
-const ASSETS = ['./', './index.html', './style.css', './app.js', './manifest.json', './icon.svg'];
+const CACHE = 'jql-v31';
+const ASSETS = ['./', './index.html', './style.css?v=31', './app.js?v=31', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
