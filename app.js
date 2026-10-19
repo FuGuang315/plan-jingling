@@ -904,6 +904,84 @@ function resampleTo16k(f, from) {
   return out;
 }
 
+// ---------- 语音自查 ----------
+// 浏览器不会告诉我们 WebSocket 握手为什么失败(安全限制),只能自己一步步试:
+//   ① 能不能到达服务器(no-cors 只关心"请求有没有完成",与鉴权无关)
+//   ② 本机时钟和服务器差多少(讯飞要求 <300 秒)
+//   ③ 真正握一次手(会消耗 1 次免费额度) —— 这一步失败才说明是鉴权/被拒
+function xfReach() {
+  return fetch('https://' + XF_HOST + XF_PATH, { mode: 'no-cors', cache: 'no-store' })
+    .then(() => true).catch(() => false);
+}
+
+// 用同源的 GitHub Pages 响应头里的 Date 当作"服务器时间",算出本机偏差
+async function clockSkewSec() {
+  try {
+    const r = await fetch('./manifest.json?t=' + Date.now(), { cache: 'no-store' });
+    const d = r.headers.get('date');
+    const t = d ? Date.parse(d) : NaN;
+    if (!t) return null;
+    return Math.round((Date.now() - t) / 1000);
+  } catch (e) { return null; }
+}
+
+function xfHandshakeTest() {
+  return new Promise(async (resolve) => {
+    let url;
+    try { url = await xfAuthUrl(); } catch (e) { resolve({ ok: false, why: e.message }); return; }
+    let done = false, ws = null;
+    const fin = (v) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      setTimeout(() => { try { if (ws && ws.readyState <= 1) ws.close(); } catch (e) {} }, 300);
+      resolve(v);
+    };
+    const timer = setTimeout(() => fin({ ok: false, why: '6 秒没有任何回应,连接被网络拦住了' }), 6000);
+    try { ws = new WebSocket(url); } catch (e) { clearTimeout(timer); resolve({ ok: false, why: e.message }); return; }
+    ws.onopen = () => {
+      // 握手成功就立刻发结束帧,不真的传音频
+      try {
+        ws.send(JSON.stringify({
+          common: { app_id: xfCfg.appid },
+          business: { language: 'zh_cn', domain: 'iat', accent: 'mandarin', vad_eos: 10000, ptt: 1 },
+          data: { status: 2, format: 'audio/L16;rate=16000', encoding: 'raw', audio: '' }
+        }));
+      } catch (e) {}
+      fin({ ok: true });
+    };
+    ws.onerror = () => fin({ ok: false, why: '服务器拒绝了握手(三值填错 / 手机时间不准 / 控制台开了 IP 白名单)' });
+  });
+}
+
+async function xfDiag() {
+  const out = [];
+  const M = (ok) => ok ? '✅' : '❌';
+  out.push(M(window.isSecureContext) + ' 页面环境:' + (window.isSecureContext ? 'https 安全环境' : '不是 https(浏览器禁止录音)'));
+  const cs = !!(window.crypto && crypto.subtle);
+  out.push(M(cs) + ' 加密接口:' + (cs ? '可用' : '不可用'));
+  const md = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  out.push(M(md) + ' 麦克风接口:' + (md ? '存在' : '不存在(非 https 或被浏览器策略禁用)'));
+
+  const ai = (xfCfg.appid || '').length, ak = (xfCfg.apikey || '').length, as = (xfCfg.apisecret || '').length;
+  const lenOk = ai === 8 && ak === 32 && as === 32;
+  out.push(M(lenOk) + ' 三值长度:APPID ' + ai + '/8,APIKey ' + ak + '/32,APISecret ' + as + '/32');
+
+  const sk = await clockSkewSec();
+  if (sk === null) out.push('🕐 时钟偏差:读不到服务器时间(不影响判断)');
+  else out.push(M(Math.abs(sk) < 300) + ' 时钟偏差:' + (sk >= 0 ? '+' : '') + sk + ' 秒(讯飞要求 300 秒内)');
+
+  const reach = await xfReach();
+  out.push(M(reach) + ' 讯飞服务器:' + (reach ? '网络能到达' : '连不上(换 WiFi/流量再试,DNS 或网络屏蔽)'));
+  if (!reach) return out.join('\n');
+
+  const hs = await xfHandshakeTest();
+  out.push(hs.ok
+    ? '✅ 鉴权握手:通过 —— 三值和手机时间都没问题,刚才的失败可能是偶发'
+    : '❌ 鉴权握手:失败 —— ' + hs.why);
+  return out.join('\n');
+}
+
 // 建立一次识别会话。返回 { stop, abort }
 async function createIat(onText, onDone, onError, preCtx) {
   const url = await xfAuthUrl();
@@ -921,7 +999,7 @@ async function createIat(onText, onDone, onError, preCtx) {
   src.connect(proc);
   proc.connect(ctx.destination);   // 不接 destination 回调不跑(输出是静音)
 
-  let ws = null, wsOpen = false, stopping = false, finished = false, firstSent = false;
+  let ws = null, wsOpen = false, stopping = false, finished = false, firstSent = false, probing = false;
   let pending = [];                // 还没凑够一帧的采样
   const queue = [];                // 待发送的 base64 音频帧
   const results = {};              // sn → 文字片段
@@ -1011,8 +1089,16 @@ async function createIat(onText, onDone, onError, preCtx) {
     }
     if (d.status === 2) finishOk();
   };
-  ws.onerror = () => fail('网络连接失败');
-  ws.onclose = () => { if (!finished) fail('连接被关闭'); };
+  // 握手失败时浏览器不给原因,主动探一次网络,把"连不上"和"被拒绝"区分开
+  ws.onerror = async () => {
+    if (finished || probing) return;
+    probing = true;
+    const reach = await xfReach();
+    fail(reach
+      ? '讯飞拒绝了连接\n可能是:①手机时间和标准时间差太多 ②APIKey/APISecret 填错(注意别被输入法自动大写) ③控制台开了 IP 白名单\n(设置里可以点「测试语音连接」看具体哪一步失败)'
+      : '连不上讯飞服务器\n手机网络或 DNS 有问题,换个 WiFi/流量再试');
+  };
+  ws.onclose = () => { if (!finished && !probing) fail('连接被关闭'); };
 
   return {
     stop() {
@@ -1110,12 +1196,14 @@ function openDsSettings() {
   html += '<hr class="setting-split"/>';
   if (xfReady()) {
     html += '<p class="sync-desc">✅ 讯飞语音已配置,按住 🎤 说话,松开发送。</p>'
-      + '<div class="sheet-actions"><button class="btn ghost" id="xf-clear">清除语音配置</button></div>';
+      + '<div class="sheet-actions"><button class="btn ghost" id="xf-test">🔍 测试语音连接</button>'
+      + '<button class="btn ghost" id="xf-clear">清除语音配置</button></div>'
+      + '<pre class="diag-out" id="xf-diag" hidden></pre>';
   } else {
     html += '<p class="sync-desc">语音输入用讯飞的「语音听写」(每天免费 500 次)。<br>去 console.xfyun.cn → 我的应用 → 计划鲸灵 → 复制三个值填下面(只存本机浏览器)。</p>'
-      + '<label class="field"><span>APPID</span><input id="xf-appid" type="text" placeholder="例如 5bc4bfeb" autocomplete="off"/></label>'
-      + '<label class="field"><span>APIKey</span><input id="xf-apikey" type="text" autocomplete="off"/></label>'
-      + '<label class="field"><span>APISecret</span><input id="xf-apisecret" type="text" autocomplete="off"/></label>'
+      + '<label class="field"><span>APPID</span><input id="xf-appid" type="text" placeholder="例如 5bc4bfeb" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"/></label>'
+      + '<label class="field"><span>APIKey</span><input id="xf-apikey" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"/></label>'
+      + '<label class="field"><span>APISecret</span><input id="xf-apisecret" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"/></label>'
       + '<div class="sheet-actions"><button class="btn primary" id="xf-save">保存语音配置</button></div>';
   }
   body.innerHTML = html;
@@ -1132,12 +1220,27 @@ function openDsSettings() {
   if (xfClear) xfClear.onclick = () => {
     xfCfg = {}; localStorage.removeItem(LS_XF); openDsSettings();
   };
+  const xfTest = document.getElementById('xf-test');
+  if (xfTest) xfTest.onclick = async () => {
+    const box = document.getElementById('xf-diag');
+    box.hidden = false;
+    box.textContent = '检查中(握手测试会消耗 1 次免费额度)…';
+    xfTest.disabled = true;
+    try { box.textContent = await xfDiag(); }
+    catch (e) { box.textContent = '诊断出错:' + ((e && e.message) || e); }
+    xfTest.disabled = false;
+  };
   const xfSave = document.getElementById('xf-save');
   if (xfSave) xfSave.onclick = () => {
     const appid = document.getElementById('xf-appid').value.trim();
     const apikey = document.getElementById('xf-apikey').value.trim();
     const apisecret = document.getElementById('xf-apisecret').value.trim();
     if (!appid || !apikey || !apisecret) { alertBox('三个值都要填'); return; }
+    // 讯飞的三值长度是固定的,长度不对基本就是打错或复制不全
+    if (appid.length !== 8 || apikey.length !== 32 || apisecret.length !== 32) {
+      alertBox('长度不对:\nAPPID 应该是 8 位,现在 ' + appid.length + '\nAPIKey 应该是 32 位,现在 ' + apikey.length + '\nAPISecret 应该是 32 位,现在 ' + apisecret.length + '\n\n请回去核对一下,别复制漏了空格或字符');
+      return;
+    }
     xfCfg = { appid: appid, apikey: apikey, apisecret: apisecret };
     localStorage.setItem(LS_XF, JSON.stringify(xfCfg));
     openDsSettings();
