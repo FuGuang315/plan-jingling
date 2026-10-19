@@ -967,6 +967,22 @@ async function xfDiag() {
   const lenOk = ai === 8 && ak === 32 && as === 32;
   out.push(M(lenOk) + ' 三值长度:APPID ' + ai + '/8,APIKey ' + ak + '/32,APISecret ' + as + '/32');
 
+  // 中文输入法会打出全角字符:长度不变、看着一样,但码点不同 → 签名必然对不上
+  const nonAscii = [xfCfg.appid, xfCfg.apikey, xfCfg.apisecret].some(s => /[^\x21-\x7e]/.test(s || ''));
+  out.push(M(!nonAscii) + ' 字符集:' + (nonAscii ? '含全角/空格等非 ASCII 字符(多半是中文输入法打的)' : '全是半角英数字'));
+
+  // 指纹:SHA-256 前 4 字节。只用来对比两台设备存的是不是同一份,不泄露原文
+  const fp = async (s) => {
+    if (!s) return '空';
+    try {
+      const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+      return Array.from(new Uint8Array(d).slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (e) { return '?'; }
+  };
+  out.push('🔑 配置指纹:APPID ' + (await fp(xfCfg.appid)) + ' / APIKey ' + (await fp(xfCfg.apikey))
+    + ' / APISecret ' + (await fp(xfCfg.apisecret))
+    + '\n   (在另一台能用的设备上打开同一页面,三个数必须完全一样)');
+
   const sk = await clockSkewSec();
   if (sk === null) out.push('🕐 时钟偏差:读不到服务器时间(不影响判断)');
   else out.push(M(Math.abs(sk) < 300) + ' 时钟偏差:' + (sk >= 0 ? '+' : '') + sk + ' 秒(讯飞要求 300 秒内)');
@@ -979,6 +995,7 @@ async function xfDiag() {
   out.push(hs.ok
     ? '✅ 鉴权握手:通过 —— 三值和手机时间都没问题,刚才的失败可能是偶发'
     : '❌ 鉴权握手:失败 —— ' + hs.why);
+  if (!hs.ok) out.push('👉 拿上面「配置指纹」和另一台能用的设备对一下,对不上就是值填错了');
   return out.join('\n');
 }
 
