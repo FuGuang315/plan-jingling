@@ -378,3 +378,12 @@ body {
 }
 .card.expanded .card-title { white-space: normal; overflow: visible; }
 .card-top { align-items: center; }
+
+/* ---------- 语音诊断输出 ---------- */
+.diag-out {
+  white-space: pre-wrap; word-break: break-all;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.75; color: #3A4560;
+  background: #F5F7FF; border-radius: 12px;
+  padding: 10px 12px; margin: 10px 0 0;
+}
